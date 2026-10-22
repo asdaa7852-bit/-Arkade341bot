@@ -11,9 +11,10 @@ import time
 import urllib.request
 import urllib.error
 
-from engine import ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council, vote_counts
+from engine import ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council, vote_counts, bounties
 
 SHOP = {
+    'exile': ('consumable', '⚔️ Тайный приговор: исключить соперника анонимно', 2000),
     'medkit': ('consumable', '🩹 Аптечка: +20 HP', 200),
     'stim': ('consumable', '💉 Стимулятор: +5 к атаке до конца игры', 250),
     'antidote': ('consumable', '🧪 Антидот: снять текущие отравления', 150),
@@ -237,7 +238,7 @@ class Bot:
         args = m.get('text', '').split()
         item = args[1].lower() if len(args) == 2 else ''
         if item not in SHOP or SHOP[item][0] != 'consumable':
-            self.api.send(chat, 'Используйте /use medkit, /use stim или /use antidote. Описание: /shop')
+            self.api.send(chat, 'Используйте /use medkit, /use stim, /use antidote или /use exile. Описание: /shop')
             return
         match = next(((c, g) for c, g in self.games.items() if uid in g['players'] and g['phase'] != 'lobby'), None)
         if not match:
@@ -254,6 +255,15 @@ class Bot:
         stock = self.state.get('accounts', {}).get(uid, {}).get('consumables', {})
         if stock.get(item, 0) < 1:
             self.api.send(chat, 'Нет этого предмета. Купить: /buy ' + item)
+            return
+        if item == 'exile':
+            if game.get('secret_exile_used'):
+                self.api.send(chat, 'Тайный приговор уже использован в этом матче. Предмет остаётся в рюкзаке.')
+                return
+            rows = [[{'text': '⚔️ Исключить: ' + p['name'],
+                      'callback_data': f"exile:{game_chat}:{game['nonce']}:{uid}:{target}"}]
+                    for target, p in game['players'].items() if target != uid and p['alive']]
+            self.api.send(chat, '⚔️ Выберите соперника для тайного приговора. Он сразу покинет матч. Имя заказчика не появится в группе. Один приговор на матч; расходует ваш лимит расходника.', rows)
             return
         if item == 'medkit':
             if player['hp'] >= 100:
@@ -372,7 +382,7 @@ class Bot:
             stock = account.setdefault('consumables', {})
             if cmd == '/shop':
                 lines = [f"{label} — {price} 🪙 · код: {item}" + (f' · в рюкзаке: {stock.get(item, 0)}' if kind == 'consumable' else ' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
-                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nНадеть: /equip fire\nТитулы и значки постоянные. Расходники одноразовые: /use код. Только ночью, максимум один расходник за игру (включая владельца).", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
+                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nНадеть: /equip fire\nТитулы и значки постоянные. Расходники одноразовые: /use код. Только ночью, максимум один расходник за игру (включая владельца). Тайный приговор: дополнительно один на весь матч.", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
             elif cmd == '/inventory':
                 lines = [f"{SHOP[item][1]} · /equip {item}" for item in owned if item in SHOP]
                 lines += [f'{SHOP[item][1]} ×{count} · /use {item}' for item, count in stock.items() if item in SHOP and count > 0]
@@ -647,7 +657,57 @@ class SurvivalBot(Bot):
                 self.safe_send(actor, f'🗳 Раунд {game["round"]}: кого исключить? У вас {voting} сек. Можно изменить выбор до конца голосования. Итоговые голоса будут открыты в группе. Воздержаться можно один раз за игру.', rows)
 
 
+
+    def exile_callback(self, q):
+        data = q.get('data', '')
+        if not data.startswith('exile:'):
+            return False
+        parts = data.split(':')
+        uid = str(q.get('from', {}).get('id', ''))
+        source_chat = q.get('message', {}).get('chat', {})
+        def answer(text):
+            self.api.call('answerCallbackQuery', callback_query_id=q['id'], text=text, show_alert=True)
+        if len(parts) != 5 or source_chat.get('type') != 'private' or str(source_chat.get('id')) != uid:
+            answer('Используйте /use exile в личном чате бота.')
+            return True
+        _, chat, nonce, actor, target = parts
+        game = self.games.get(chat)
+        if actor != uid or not game or game.get('nonce') != nonce or game['phase'] != 'night' or time.time() >= game['deadline']:
+            answer('Выбор устарел. Откройте /use exile ночью.')
+            return True
+        player = game['players'].get(uid)
+        victim = game['players'].get(target)
+        stock = self.state.get('accounts', {}).get(uid, {}).get('consumables', {})
+        if not player or not player['alive'] or not victim or not victim['alive'] or target == uid:
+            answer('Нужен живой соперник. Предмет не потрачен.')
+            return True
+        if game.get('secret_exile_used') or player.get('consumable_used') or stock.get('exile', 0) < 1:
+            answer('Лимит приговора/расходника исчерпан или нет предмета. Повторного списания нет.')
+            return True
+        import copy
+        previous = copy.deepcopy(self.state)
+        try:
+            stock['exile'] -= 1
+            player['consumable_used'] = True
+            game['secret_exile_used'] = True
+            victim.update(hp=0, alive=False)
+            game.get('votes', {}).pop(target, None)
+            bounties(game['players'])
+            self.save()
+        except Exception:
+            self.state = previous
+            self.games = self.state['games']
+            raise
+        # Public announcements never include the purchaser's identity.
+        self.safe_send(chat, f"⚔️ Арена вынесла тайный приговор: {victim['name']} повержен!\\nИмя заказчика скрыто.")
+        self.safe_send(target, '⚔️ Вы повержены тайным приговором арены и больше не участвуете в этом матче.')
+        self.finish(chat, game)
+        answer('Тайный приговор исполнен. Предмет использован.')
+        return True
+
     def callback(self, q):
+        if self.exile_callback(q):
+            return
         if payments.callback(self, q):
             return
         data = q.get('data', '')
