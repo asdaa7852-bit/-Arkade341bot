@@ -522,7 +522,7 @@ class Bot:
         logging.info('Добавление бота в группы разрешено Telegram: %s', me.get('can_join_groups', False))
         self.api.call('deleteWebhook', drop_pending_updates=False)
         self.configure_commands()
-        self.api.call('setMyDescription', description='⚔️ Арена ждёт! 20 тайных ролей, ночные сражения и открытый приговор игроков. Выживет только один.\\n\\n🏆 Побеждай, получай коины и собирай снаряжение.\\n👥 Игра для 4–20 участников в группах.\\n👇 Нажми «Старт», чтобы вступить на арену!')
+        self.api.call('setMyDescription', description='⚔️ Арена ждёт! 20 тайных ролей, ночные сражения и открытый приговор игроков. Выживет только один.\n\n🏆 Побеждай, получай коины и собирай снаряжение.\n👥 Игра для 4–20 участников в группах.\n👇 Нажми «Старт», чтобы вступить на арену!')
         self.api.call('setMyShortDescription', short_description='⚔️ Выживает сильнейший! 20 ролей, ночные бои и приговор арены. Играй с друзьями: 4–20 участников.')
         logging.info('Бот запущен: @%s', self.username)
         while True:
