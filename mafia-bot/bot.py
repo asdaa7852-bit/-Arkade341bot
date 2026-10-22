@@ -584,8 +584,9 @@ class SurvivalBot(Bot):
                 if not player['alive']:
                     continue
                 rows = [[{'text': p['name'], 'callback_data': f"v:{chat}:{game['nonce']}:{u}"}] for u, p in game['players'].items() if p['alive'] and u != actor]
-                rows.append([{'text': 'Воздержаться', 'callback_data': f"v:{chat}:{game['nonce']}:0"}])
-                self.safe_send(actor, f'🗳 Раунд {game["round"]}: кого исключить? У вас {voting} сек. Можно изменить выбор до конца голосования. Итоговые голоса будут открыты в группе.', rows)
+                if not player.get('abstain_used'):
+                    rows.append([{'text': 'Воздержаться (1 раз за игру)', 'callback_data': f"v:{chat}:{game['nonce']}:0"}])
+                self.safe_send(actor, f'🗳 Раунд {game["round"]}: кого исключить? У вас {voting} сек. Можно изменить выбор до конца голосования. Итоговые голоса будут открыты в группе. Воздержаться можно один раз за игру.', rows)
 
 
     def callback(self, q):
@@ -626,7 +627,7 @@ class SurvivalBot(Bot):
                         g['votes'][uid]=target
                         self.save()
                         answer = 'Выбор принят. Можно изменить до конца ночи.'
-                    elif g['phase']=='vote' and q.get('message', {}).get('chat', {}).get('type') == 'private' and str(q.get('message', {}).get('chat', {}).get('id')) == uid and (target=='0' or target in g['players'] and g['players'][target]['alive'] and target!=uid):
+                    elif g['phase']=='vote' and q.get('message', {}).get('chat', {}).get('type') == 'private' and str(q.get('message', {}).get('chat', {}).get('id')) == uid and (target=='0' and not p.get('abstain_used') or target in g['players'] and g['players'][target]['alive'] and target!=uid):
                         g['votes'][uid]=target
                         self.save()
                         answer = 'Голос принят.'
@@ -702,8 +703,8 @@ class SurvivalBot(Bot):
                 report = ['🗳 Итоги голосования', '', 'Кто за кого:']
                 for voter, player in alive.items():
                     choice = votes.get(voter)
-                    valid = choice == '0' or choice in alive and choice != voter
-                    label = 'воздержался' if choice == '0' else alive[choice]['name'] if valid else 'не голосовал'
+                    valid = choice == '0' and not player.get('abstain_used') or choice in alive and choice != voter
+                    label = 'воздержался' if choice == '0' and valid else alive[choice]['name'] if valid else 'не голосовал'
                     weight = ' (2 голоса)' if valid and player.get('boosted') else ''
                     report.append(f"{player['name']} → {label}{weight}")
                 report += ['', 'Количество голосов:']
