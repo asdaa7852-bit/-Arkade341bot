@@ -143,6 +143,17 @@ class API:
         except Exception:
             raise RuntimeError('Не удалось отправить анимацию') from None
 
+    def profile(self, chat, uid, text):
+        try:
+            photos = self.call('getUserProfilePhotos', user_id=int(uid), limit=1).get('photos', [])
+            if photos and photos[0]:
+                photo = max(photos[0], key=lambda p: p.get('width', 0) * p.get('height', 0))
+                if len(text) <= 1024:
+                    return self.call('sendPhoto', chat_id=chat, photo=photo['file_id'], caption=text)
+        except Exception:
+            logging.warning('Аватарка недоступна; показываем профиль текстом')
+        return self.send(chat, text)
+
     def send(self, chat, text, keyboard=None):
         params = {'chat_id': chat, 'text': text}
         if keyboard:
@@ -471,7 +482,7 @@ class Bot:
             else:
                 wins = account.get('wins', 0)
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
-                self.api.send(chat, f"👤 Ваш профиль\n🆔 {uid}\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (владелец)' if unlimited else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
+                getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, uid, f"Ваш профиль\n🆔 {uid}\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (владелец)' if unlimited else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
             return
         if cmd == '/roles':
             self.api.send(chat, '\n'.join(ROLES.values()))
