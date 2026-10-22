@@ -20,6 +20,7 @@ HELP = '''🔥 Выживает сильнейший
 /players — здоровье участников
 /roles — все 20 ролей
 /myrole — ваша роль и оставшиеся способности
+/votetime 45 — время голосования (создатель и администраторы)
 /stop — отменить
 
 Каждый сначала нажимает /start в личном чате бота. Ночью выбирайте атаку, защиту или припасы. Днём обсуждение и голосование: выбранный теряет 35 HP. Роли тайные, команд нет. Побеждает последний живой. С третьей ночи арена наносит растущий урон всем. При одновременной гибели всех победителя нет. Без хода включается защита. Управление — у создателя и администраторов.'''
@@ -79,7 +80,7 @@ class Bot:
         self.games = self.state['games']
         self.night = max(15, int(os.getenv('NIGHT_SECONDS', '60')))
         self.discuss = max(15, int(os.getenv('DISCUSS_SECONDS', '90')))
-        self.voting = max(15, int(os.getenv('VOTE_SECONDS', '60')))
+        self.voting = max(15, int(os.getenv('VOTE_SECONDS', '45')))
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,6 +146,26 @@ class Bot:
         g = self.games.get(chat)
         if cmd in ('/help', '/start'):
             self.api.send(chat, HELP)
+        elif cmd == '/votetime':
+            if not g:
+                self.api.send(chat, 'Сначала создайте игру: /newgame')
+                return
+            if not self.authorized(chat, uid, g):
+                self.api.send(chat, 'Команда доступна создателю игры и администраторам.')
+                return
+            args = text.split()
+            if len(args) != 2 or not args[1].isdigit() or not 15 <= int(args[1]) <= 300:
+                self.api.send(chat, 'Используйте /votetime 45. Допустимо от 15 до 300 секунд.')
+                return
+            seconds = int(args[1])
+            self.state.setdefault('vote_seconds', {})[chat] = seconds
+            if g['phase'] == 'vote':
+                now = time.time()
+                # Shortening never extends an existing deadline or clears votes.
+                g['deadline'] = min(g['deadline'], g.get('phase_started', now) + seconds)
+            self.save()
+            self.api.send(chat, f'🗳 Время голосования: {seconds} сек. Настройка сохранена для этой группы.'
+                          + (' Текущее голосование может завершиться раньше.' if g['phase'] == 'vote' else ''))
         elif cmd == '/newgame':
             if g:
                 self.api.send(chat, 'Игра уже существует. /join — вступить, /players — список.')
@@ -214,7 +235,7 @@ class Bot:
     def run(self):
         self.username = self.api.call('getMe')['username']
         self.api.call('deleteWebhook', drop_pending_updates=False)
-        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('myrole','Моя тайная роль')]])
+        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('myrole','Моя тайная роль'),('votetime','Время голосования: /votetime 45')]])
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
@@ -265,7 +286,9 @@ class SurvivalBot(Bot):
             defaults(p)
             if phase=='night' and p['alive'] and p['role']=='mutant':
                 p['hp']=min(100,p['hp']+5)
-        game.update(phase=phase, nonce=secrets.token_hex(4), votes={}, deadline=time.time() + {'night': self.night, 'discuss': self.discuss, 'vote': self.voting}[phase])
+        voting = self.state.get('vote_seconds', {}).get(str(chat), self.voting)
+        game['phase_started'] = time.time()
+        game.update(phase=phase, nonce=secrets.token_hex(4), votes={}, deadline=time.time() + {'night': self.night, 'discuss': self.discuss, 'vote': voting}[phase])
         self.save()
         if phase == 'night':
             self.safe_send(chat, f"🌑 Раунд {game['round']}. Ночь: {self.night} сек.\nВыбирайте действие в личном чате. Без хода — защита.")
@@ -280,7 +303,7 @@ class SurvivalBot(Bot):
         else:
             rows = [[{'text': p['name'], 'callback_data': f"v:{chat}:{game['nonce']}:{u}"}] for u,p in game['players'].items() if p['alive']]
             rows.append([{'text': 'Воздержаться', 'callback_data': f"v:{chat}:{game['nonce']}:0"}])
-            self.safe_send(chat, f'🗳 Совет арены: {self.voting} сек. Выберите, кто потеряет 35 здоровья. При ничьей наказания нет.', rows)
+            self.safe_send(chat, f'🗳 Совет арены: {voting} сек. Выберите, кто потеряет 35 здоровья. При ничьей наказания нет.', rows)
 
     def callback(self, q):
         answer = 'Кнопка устарела или ход недоступен.'
