@@ -12,6 +12,23 @@ import urllib.error
 
 from engine import ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council
 
+SHOP = {
+    'survivor': ('title', 'Выживший', 100),
+    'raider': ('title', 'Покоритель арены', 300),
+    'legend': ('title', 'Гроза арены', 700),
+    'fire': ('badge', '🔥 Огонь', 150),
+    'wolf': ('badge', '🐺 Волк', 250),
+    'diamond': ('badge', '💎 Бриллиант', 500),
+}
+
+
+def cosmetics(account):
+    owned = account.get('inventory', [])
+    selected = account.get('equipped', {})
+    return ' · '.join(SHOP[item][1] for kind in ('title', 'badge')
+                      if (item := selected.get(kind)) in SHOP and item in owned and SHOP[item][0] == kind)
+
+
 HELP = '''🔥 Выживает сильнейший
 /start — набор и автоматический старт через 90 секунд
 /newgame — новая арена
@@ -21,6 +38,11 @@ HELP = '''🔥 Выживает сильнейший
 /players — здоровье участников
 /roles — все 20 ролей
 /myrole — ваша роль и оставшиеся способности
+/shop — магазин
+/buy код — купить предмет
+/inventory — ваши покупки
+/equip код — надеть предмет
+/unequip — снять украшения
 /balance — баланс коинов
 /profile — победы и награды
 /top — лучшие игроки
@@ -145,20 +167,59 @@ class Bot:
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
         cmd = command[0]
+        if cmd in ('/shop', '/buy', '/inventory', '/equip', '/unequip'):
+            accounts = self.state.setdefault('accounts', {})
+            account = accounts.setdefault(uid, {'coins': 0, 'wins': 0, 'games': 0})
+            owned = account.setdefault('inventory', [])
+            if cmd == '/shop':
+                lines = [f"{label} — {price} 🪙 · код: {item}" + (' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
+                self.api.send(chat, '🛍 Магазин украшений профиля\n' + '\n'.join(lines) + f"\n\nБаланс: {account['coins']} 🪙\nКупить: /buy fire\nНадеть: /equip fire\nПокупки постоянные; титул и значок можно носить вместе.")
+            elif cmd == '/inventory':
+                lines = [f"{SHOP[item][1]} · /equip {item}" for item in owned if item in SHOP]
+                self.api.send(chat, '🎒 Ваши покупки\n' + ('\n'.join(lines) or 'Пока пусто. Откройте /shop') + '\nНадето: ' + (cosmetics(account) or 'ничего'))
+            elif cmd == '/unequip':
+                account['equipped'] = {}
+                self.save()
+                self.api.send(chat, 'Украшения сняты. Покупки остались в /inventory.')
+            else:
+                args = text.split()
+                if len(args) != 2 or args[1].lower() not in SHOP:
+                    self.api.send(chat, 'Укажите код предмета из /shop. Пример: /buy fire или /equip fire')
+                    return
+                item = args[1].lower()
+                kind, label, price = SHOP[item]
+                if cmd == '/buy':
+                    if item in owned:
+                        self.api.send(chat, 'Этот предмет уже куплен. Надеть: /equip ' + item)
+                        return
+                    if account['coins'] < price:
+                        self.api.send(chat, f"Не хватает коинов: нужно {price}, у вас {account['coins']}.")
+                        return
+                    account['coins'] -= price
+                    owned.append(item)
+                    self.save()
+                    self.api.send(chat, f"✅ Куплено: {label}. Осталось {account['coins']} 🪙.\nНадеть: /equip {item}")
+                elif item not in owned:
+                    self.api.send(chat, 'Сначала купите предмет: /buy ' + item)
+                else:
+                    account.setdefault('equipped', {})[kind] = item
+                    self.save()
+                    self.api.send(chat, '✅ Надето: ' + label + '. Посмотреть: /profile')
+            return
         if cmd in ('/balance', '/profile', '/top'):
             accounts = self.state.get('accounts', {})
             account = accounts.get(uid, {})
             if cmd == '/top':
                 ranked = sorted(accounts.items(), key=lambda item: (-item[1].get('wins', 0), -item[1].get('coins', 0), item[0]))
                 ranked = [(u, a) for u, a in ranked if a.get('wins', 0) > 0][:10]
-                lines = [f"{i}. {a['name']} — 🏆 {a['wins']} · 🪙 {a['coins']}" for i, (u, a) in enumerate(ranked, 1)]
+                lines = [f"{i}. {a['name']} {cosmetics(a)} — 🏆 {a['wins']} · 🪙 {a['coins']}" for i, (u, a) in enumerate(ranked, 1)]
                 self.api.send(chat, '🏆 Топ игроков\n' + ('\n'.join(lines) or 'Побед пока нет. Станьте первым!'))
             elif cmd == '/balance':
                 self.api.send(chat, f"🪙 Ваш баланс: {account.get('coins', 0)} коинов.\nПобеда: +100. Это игровые очки без денежной стоимости.")
             else:
                 wins = account.get('wins', 0)
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
-                self.api.send(chat, f"👤 Ваш профиль\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
+                self.api.send(chat, f"👤 Ваш профиль\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
             return
         if cmd == '/roles':
             self.api.send(chat, '\n'.join(ROLES.values()))
@@ -279,7 +340,7 @@ class Bot:
     def run(self):
         self.username = self.api.call('getMe')['username']
         self.api.call('deleteWebhook', drop_pending_updates=False)
-        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
+        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
