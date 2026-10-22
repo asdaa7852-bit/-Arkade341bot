@@ -407,7 +407,7 @@ class Bot:
             stock = account.setdefault('consumables', {})
             if cmd == '/shop':
                 lines = [f"{label} — {price} 🪙 · код: {item}" + (f' · в рюкзаке: {stock.get(item, 0)}' if kind == 'consumable' else ' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
-                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nНадеть: /equip fire\nТитулы и значки постоянные. Расходники одноразовые: /use код. Только ночью, максимум один расходник за игру (включая владельца). Тайный приговор: дополнительно один на весь матч.", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
+                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nТитулы и значки надеваются сразу после покупки. Расходники применяются сразу, если это возможно; иначе сохраняются в рюкзаке: /use код. Только ночью, максимум один расходник за игру (включая владельца). Тайный приговор: дополнительно один на весь матч.", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
             elif cmd == '/inventory':
                 lines = [f"{SHOP[item][1]} · /equip {item}" for item in owned if item in SHOP]
                 lines += [f'{SHOP[item][1]} ×{count} · /use {item}' for item, count in stock.items() if item in SHOP and count > 0]
@@ -440,12 +440,15 @@ class Bot:
                         stock[item] = stock.get(item, 0) + 1
                     else:
                         owned.append(item)
+                        account.setdefault('equipped', {})[kind] = item
                     if receipt:
                         self.state.setdefault('shop_receipts', {})[receipt] = item
                     self.save()
-                    self.api.send(chat, f"✅ Куплено: {label}. Баланс: {'∞' if unlimited else account['coins']} 🪙.\n" + (("Выберите соперника кнопкой ниже." if item == 'exile' else f"Использовать: /use {item}") if kind == 'consumable' else f"Надеть: /equip {item}"))
+                    self.api.send(chat, f"✅ Куплено: {label}. Баланс: {'∞' if unlimited else account['coins']} 🪙.\n" + (("Выберите соперника кнопкой ниже." if item == 'exile' else 'Пробую применить сразу. Если сейчас нельзя — предмет останется в рюкзаке: /inventory.') if kind == 'consumable' else 'Уже надето! Посмотреть: /profile'))
                     if item == 'exile':
                         self.show_exile_targets(uid, chat)
+                    elif kind == 'consumable':
+                        self.use_consumable(dict(m, text='/use ' + item), uid, chat)
                 elif kind == 'consumable':
                     self.api.send(chat, 'Расходники используются командой /use ' + item)
                 elif item not in owned:
