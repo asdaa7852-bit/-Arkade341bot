@@ -49,7 +49,7 @@ class SurvivalTests(unittest.TestCase):
         self.click('1','1');self.click('99','2');self.click('1','2','old');self.click('1','0')
         self.assertEqual(self.g['votes'],{})
         self.click('1','2');self.click('1','guard')
-        self.assertEqual(self.g['votes'],{'1':'guard'})
+        self.assertEqual(self.g['votes'],{'1':'2'})
     def test_dead_and_expired(self):
         self.g['players']['2']['alive']=False
         self.click('2','1');self.click('1','2')
@@ -98,11 +98,11 @@ class InterfaceTests(unittest.TestCase):
         p['boosted']=False
         self.click('1','boost')
         self.assertFalse(p['boosted'])
-    def test_change_special_to_guard_does_not_consume(self):
+    def test_first_special_is_final_and_consumed(self):
         p=self.g['players']['1'];p['role']='sniper'
         self.click('1','shot~2');self.click('1','guard')
         self.resolve()
-        self.assertEqual(p['used'],0)
+        self.assertEqual(p['used'],1)
     def test_all_buttons_authorized_and_fit_telegram(self):
         from engine import ROLES,defaults
         for role in ROLES:
