@@ -1,4 +1,5 @@
 """Telegram Mafia, Python 3.11+, standard library only."""
+import payments
 import collections
 import json
 import logging
@@ -38,6 +39,9 @@ HELP = '''🔥 Выживает сильнейший
 /players — здоровье участников
 /roles — все 20 ролей
 /myrole — ваша роль и оставшиеся способности
+/stars — купить коины за Stars
+/terms — условия покупки
+/paysupport — помощь по оплате
 /shop — магазин
 /buy код — купить предмет
 /inventory — ваши покупки
@@ -159,6 +163,8 @@ class Bot:
         return any(c != chat and uid in g['players'] for c, g in self.games.items())
 
     def message(self, m):
+        if payments.delivery(self, m):
+            return
         text = m.get('text', '')
         if not text.startswith('/') or m.get('from', {}).get('is_bot'):
             return
@@ -167,13 +173,15 @@ class Bot:
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
         cmd = command[0]
+        if payments.command(self, m, cmd):
+            return
         if cmd in ('/shop', '/buy', '/inventory', '/equip', '/unequip'):
             accounts = self.state.setdefault('accounts', {})
             account = accounts.setdefault(uid, {'coins': 0, 'wins': 0, 'games': 0})
             owned = account.setdefault('inventory', [])
             if cmd == '/shop':
                 lines = [f"{label} — {price} 🪙 · код: {item}" + (' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
-                self.api.send(chat, '🛍 Магазин украшений профиля\n' + '\n'.join(lines) + f"\n\nБаланс: {account['coins']} 🪙\nКупить: /buy fire\nНадеть: /equip fire\nПокупки постоянные; титул и значок можно носить вместе.")
+                self.api.send(chat, '🛍 Магазин украшений профиля\n' + '\n'.join(lines) + f"\n\nБаланс: {account['coins']} 🪙\nКупить: /buy fire\nПополнить за Stars: /stars\nНадеть: /equip fire\nПокупки постоянные; титул и значок можно носить вместе.")
             elif cmd == '/inventory':
                 lines = [f"{SHOP[item][1]} · /equip {item}" for item in owned if item in SHOP]
                 self.api.send(chat, '🎒 Ваши покупки\n' + ('\n'.join(lines) or 'Пока пусто. Откройте /shop') + '\nНадето: ' + (cosmetics(account) or 'ничего'))
@@ -340,19 +348,23 @@ class Bot:
     def run(self):
         self.username = self.api.call('getMe')['username']
         self.api.call('deleteWebhook', drop_pending_updates=False)
-        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
+        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
                 self.tick()
-                updates = self.api.call('getUpdates', offset=self.state['offset'], timeout=2, allowed_updates=['message', 'callback_query'])
+                updates = self.api.call('getUpdates', offset=self.state['offset'], timeout=2, allowed_updates=['message', 'callback_query', 'pre_checkout_query'])
                 for update in updates:
                     try:
-                        if 'callback_query' in update:
+                        if 'pre_checkout_query' in update:
+                            payments.precheckout(self, update['pre_checkout_query'])
+                        elif 'callback_query' in update:
                             self.callback(update['callback_query'])
                         elif 'message' in update:
                             self.message(update['message'])
                     except Exception as exc:
+                        if 'pre_checkout_query' in update or any(k in update.get('message', {}) for k in ('successful_payment', 'refunded_payment')):
+                            raise
                         logging.warning('Ошибка обработки: %s', type(exc).__name__)
                     self.state['offset'] = update['update_id'] + 1
                     self.save()
