@@ -14,7 +14,7 @@ class ConsumableTests(unittest.TestCase):
         self.p={'name':'Игрок','role':'doctor','alive':True,'hp':70,'power':0,'poison':[3]}
         self.g={'owner':'1','phase':'night','deadline':time.time()+60,'players':{'1':self.p}}
         self.bot.games['-1']=self.g
-    def cmd(self,text,mid=1):self.bot.message({'text':text,'message_id':mid,'from':{'id':1},'chat':{'id':1,'type':'private'}})
+    def cmd(self,text,mid=1):self.bot.message({'text':text,'message_id':mid,'from':{'id':1},'chat':{'id':1,'type':'private'}}, button_action=True)
     def test_purchase_replay_and_repeat_purchase(self):
         self.cmd('/buy medkit');self.cmd('/buy medkit');self.cmd('/buy medkit',2)
         a=self.bot.state['accounts']['1'];self.assertEqual(a['coins'],600);self.assertEqual(a['consumables']['medkit'],1)
