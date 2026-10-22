@@ -47,6 +47,8 @@ HELP = '''🔥 Выживает сильнейший
 /inventory — ваши покупки
 /equip код — надеть предмет
 /unequip — снять украшения
+/transfer сумма — перевод ответом на сообщение
+/transfer ID сумма — перевод по Telegram ID
 /balance — баланс коинов
 /profile — победы и награды
 /top — лучшие игроки
@@ -159,6 +161,63 @@ class Bot:
         game['lobby_text'] = text
         self.save()
 
+
+    def transfer(self, m, uid, chat, unlimited):
+        args = m.get('text', '').split()
+        reply_user = m.get('reply_to_message', {}).get('from', {})
+        if len(args) == 2 and reply_user:
+            target, amount_text = str(reply_user['id']), args[1]
+            if reply_user.get('is_bot'):
+                self.api.send(chat, 'Нельзя передавать коины ботам.')
+                return
+        elif len(args) == 3 and args[1].isascii() and args[1].isdigit():
+            target, amount_text = str(int(args[1])), args[2]
+        else:
+            self.api.send(chat, 'Ответьте на сообщение игрока: /transfer 100\\nИли укажите Telegram ID: /transfer 123456789 100\\nСвой ID можно посмотреть в /profile.')
+            return
+        if not amount_text.isascii() or not amount_text.isdigit() or len(amount_text) > 7 or not 1 <= int(amount_text) <= 1000000:
+            self.api.send(chat, 'Сумма должна быть целым числом от 1 до 1000000.')
+            return
+        amount = int(amount_text)
+        if target == uid:
+            self.api.send(chat, 'Нельзя перевести коины самому себе.')
+            return
+        accounts = self.state.setdefault('accounts', {})
+        known = set(accounts) | set(self.state.get('ready', []))
+        known.update(u for g in self.games.values() for u in g['players'])
+        if target not in known:
+            self.api.send(chat, 'Игрок ещё не зарегистрирован. Пусть сначала нажмёт /start в личном чате бота.')
+            return
+        if 'message_id' not in m:
+            self.api.send(chat, 'Не удалось определить сообщение перевода. Отправьте команду заново.')
+            return
+        key = f"{chat}:{m['message_id']}"
+        ledger = self.state.setdefault('coin_transfers', {})
+        if key in ledger:
+            self.safe_send(chat, 'Этот перевод уже выполнен. Повторного списания нет.')
+            return
+        sender = accounts.get(uid, {'coins': 0, 'wins': 0, 'games': 0})
+        if not unlimited and sender['coins'] < amount:
+            self.api.send(chat, f"Недостаточно коинов. Баланс: {sender['coins']}.")
+            return
+        # Commit both balances and the receipt in one atomic state-file replacement.
+        import copy
+        previous = copy.deepcopy(self.state)
+        try:
+            sender = accounts.setdefault(uid, sender)
+            recipient = accounts.setdefault(target, {'coins': 0, 'wins': 0, 'games': 0})
+            if not unlimited:
+                sender['coins'] -= amount
+            recipient['coins'] += amount
+            ledger[key] = {'from': uid, 'to': target, 'amount': amount, 'created': time.time()}
+            self.save()
+        except Exception:
+            self.state = previous
+            self.games = self.state['games']
+            raise
+        balance = '∞' if unlimited else sender['coins']
+        self.safe_send(chat, f"✅ Передано {amount} 🪙 игроку ID {target}.\\nВаш баланс: {balance}. Комиссия: 0.")
+
     def active_elsewhere(self, uid, chat):
         return any(c != chat and uid in g['players'] for c, g in self.games.items())
 
@@ -177,6 +236,9 @@ class Bot:
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
         cmd = command[0]
+        if cmd == '/transfer':
+            self.transfer(m, uid, chat, unlimited)
+            return
         if payments.command(self, m, cmd):
             return
         if cmd in ('/shop', '/buy', '/inventory', '/equip', '/unequip'):
@@ -232,7 +294,7 @@ class Bot:
             else:
                 wins = account.get('wins', 0)
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
-                self.api.send(chat, f"👤 Ваш профиль\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (владелец)' if unlimited else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
+                self.api.send(chat, f"👤 Ваш профиль\n🆔 {uid}\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (владелец)' if unlimited else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
             return
         if cmd == '/roles':
             self.api.send(chat, '\n'.join(ROLES.values()))
@@ -353,7 +415,7 @@ class Bot:
     def run(self):
         self.username = self.api.call('getMe')['username']
         self.api.call('deleteWebhook', drop_pending_updates=False)
-        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
+        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
