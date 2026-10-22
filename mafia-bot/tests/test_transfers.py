@@ -12,7 +12,7 @@ class TransferTests(unittest.TestCase):
         self.bot=SurvivalBot(API(),str(Path(self.tmp.name)/'s.json'));self.bot.username='Arkade341bot'
         self.bot.state['accounts']={'1':{'coins':200,'wins':0,'games':0},'2':{'coins':0,'wins':0,'games':0}}
     def cmd(self,text,mid=1,reply=None):
-        m={'text':text,'message_id':mid,'from':{'id':1},'chat':{'id':-1,'type':'group'}}
+        m={'text':text,'message_id':mid,'from':{'id':1},'chat':{'id':1,'type':'private'}}
         if reply:m['reply_to_message']={'from':reply}
         self.bot.message(m)
     def balances(self):return [self.bot.state['accounts'][u]['coins'] for u in ('1','2')]
