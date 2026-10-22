@@ -13,6 +13,7 @@ import urllib.error
 from engine import ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council
 
 HELP = '''🔥 Выживает сильнейший
+/start — набор и автоматический старт через 90 секунд
 /newgame — новая арена
 /join — вступить
 /leave — выйти до старта
@@ -144,7 +145,26 @@ class Bot:
         if m['chat']['type'] not in ('group', 'supergroup'):
             return
         g = self.games.get(chat)
-        if cmd in ('/help', '/start'):
+        if cmd == '/start':
+            if not g:
+                self.message(dict(m, text='/newgame'))
+                g = self.games.get(chat)
+                if not g:
+                    return
+            if g['phase'] != 'lobby':
+                self.api.send(chat, 'Игра уже началась.')
+                return
+            if not self.authorized(chat, uid, g):
+                self.api.send(chat, 'Команда доступна создателю игры и администраторам.')
+                return
+            if 'autostart_at' in g:
+                remaining = max(0, int(g['autostart_at'] - time.time() + 0.999))
+                self.api.send(chat, f'⏳ Автостарт уже включён. Осталось {remaining} сек. /join — вступить.')
+                return
+            g['autostart_at'] = time.time() + 90
+            self.save()
+            self.api.send(chat, '⏳ Игра начнётся автоматически через 90 секунд при наличии 4–20 игроков.\n/join — вступить. Каждый сначала нажимает /start в личном чате бота.\n/stop — отменить.')
+        elif cmd == '/help':
             self.api.send(chat, HELP)
         elif cmd == '/votetime':
             if not g:
@@ -235,7 +255,7 @@ class Bot:
     def run(self):
         self.username = self.api.call('getMe')['username']
         self.api.call('deleteWebhook', drop_pending_updates=False)
-        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('myrole','Моя тайная роль'),('votetime','Время голосования: /votetime 45')]])
+        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('myrole','Моя тайная роль'),('votetime','Время голосования: /votetime 45')]])
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
@@ -347,7 +367,17 @@ class SurvivalBot(Bot):
 
     def tick(self):
         for chat, g in list(self.games.items()):
-            if g['phase'] == 'lobby' or time.time() < g['deadline']:
+            if g['phase'] == 'lobby':
+                if 'autostart_at' in g and time.time() >= g['autostart_at']:
+                    del g['autostart_at']
+                    self.save()
+                    if len(g['players']) < 4:
+                        self.safe_send(chat, '⏳ Автостарт отменён: нужно минимум 4 игрока. Набор остаётся открытым. /start — запустить новый отсчёт на 90 секунд.')
+                    else:
+                        self.message({'text': '/begin', 'from': {'id': int(g['owner'])},
+                                      'chat': {'id': int(chat), 'type': 'group'}})
+                continue
+            if time.time() < g['deadline']:
                 continue
             if g['phase'] == 'discuss':
                 self.phase(chat, g, 'vote')
