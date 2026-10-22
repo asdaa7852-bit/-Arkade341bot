@@ -22,6 +22,9 @@ HELP = '''🔥 Выживает сильнейший
 /roles — все 20 ролей
 /myrole — ваша роль и оставшиеся способности
 /votetime 45 — время голосования (создатель и администраторы)
+/balance — баланс коинов
+/profile — победы и награды
+/top — лучшие игроки
 /stop — отменить
 
 Каждый сначала нажимает /start в личном чате бота. Ночью выбирайте атаку, защиту или припасы. Днём обсуждение и голосование: выбранный теряет 35 HP. Роли тайные, команд нет. Побеждает последний живой. С третьей ночи арена наносит растущий урон всем. При одновременной гибели всех победителя нет. Без хода включается защита. Управление — у создателя и администраторов.'''
@@ -143,6 +146,21 @@ class Bot:
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
         cmd = command[0]
+        if cmd in ('/balance', '/profile', '/top'):
+            accounts = self.state.get('accounts', {})
+            account = accounts.get(uid, {})
+            if cmd == '/top':
+                ranked = sorted(accounts.items(), key=lambda item: (-item[1].get('wins', 0), -item[1].get('coins', 0), item[0]))
+                ranked = [(u, a) for u, a in ranked if a.get('wins', 0) > 0][:10]
+                lines = [f"{i}. {a['name']} — 🏆 {a['wins']} · 🪙 {a['coins']}" for i, (u, a) in enumerate(ranked, 1)]
+                self.api.send(chat, '🏆 Топ игроков\n' + ('\n'.join(lines) or 'Побед пока нет. Станьте первым!'))
+            elif cmd == '/balance':
+                self.api.send(chat, f"🪙 Ваш баланс: {account.get('coins', 0)} коинов.\nПобеда: +100. Это игровые очки без денежной стоимости.")
+            else:
+                wins = account.get('wins', 0)
+                badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
+                self.api.send(chat, f"👤 Ваш профиль\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
+            return
         if cmd == '/roles':
             self.api.send(chat, '\n'.join(ROLES.values()))
             return
@@ -282,7 +300,7 @@ class Bot:
     def run(self):
         self.username = self.api.call('getMe')['username']
         self.api.call('deleteWebhook', drop_pending_updates=False)
-        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('myrole','Моя тайная роль'),('votetime','Время голосования: /votetime 45')]])
+        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль'),('votetime','Время голосования: /votetime 45')]])
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
@@ -382,14 +400,35 @@ class SurvivalBot(Bot):
             self.safe_send(chat,announcement)
 
     def finish(self, chat, game):
-        alive = [p for p in game['players'].values() if p['alive']]
+        # Persist the reward and game removal together to prevent double credit.
+        if self.games.get(chat) is not game:
+            return True
+        alive = [(uid, p) for uid, p in game['players'].items() if p['alive']]
         if len(alive) > 1:
             return False
-        result = '🏆 Выжил сильнейший: ' + alive[0]['name'] if alive else '💀 Арена забрала всех. Победителя нет.'
+        accounts = self.state.setdefault('accounts', {})
+        for uid, p in game['players'].items():
+            account = accounts.setdefault(uid, {'coins': 0, 'wins': 0, 'games': 0})
+            account['name'] = p['name']
+            account['games'] += 1
+        if alive:
+            uid, winner = alive[0]
+            account = accounts[uid]
+            account['wins'] += 1
+            bonus, badge = {1: (0, '🥇 Первая победа'), 5: (250, '🏅 Чемпион арены'), 10: (500, '👑 Легенда арены')}.get(account['wins'], (0, None))
+            account['coins'] += 100 + bonus
+            result = '🏆 Выжил сильнейший: ' + winner['name']
+            result += f"\n🪙 Награда: +100 коинов. Баланс: {account['coins']}."
+            if badge:
+                result += '\nНовая награда: ' + badge
+                if bonus:
+                    result += f' · бонус +{bonus} коинов!'
+        else:
+            result = '💀 Арена забрала всех. Победителя нет. Коины не начислены.'
         roles = '\n'.join(f"{p['name']}: {ROLES[p['role']]}" for p in game['players'].values())
         del self.games[chat]
         self.save()
-        self.safe_send(chat, result + '\n\nТайные роли:\n' + roles + '\n\n/newgame — реванш')
+        self.safe_send(chat, result + '\n\nТайные роли:\n' + roles + '\n\n/profile — награды · /top — рейтинг\n/start — реванш')
         return True
 
     def tick(self):
