@@ -3,9 +3,9 @@ import secrets
 import time
 
 PACKS = {'100': (100, 10), '500': (500, 40), '1500': (1500, 100)}
-TERMS = ('Коины — игровые очки для украшений из /shop, не деньги и не выводятся. '
+TERMS = ('Коины — игровые очки для товаров из /shop, не деньги и не выводятся. '
          'Пакет начисляется после подтверждения Telegram. Разовый платёж, без подписки. '
-         'Помощь и возвраты: /paysupport. Перед оплатой прочитайте условия и подтвердите их командой '
+         'Помощь и возвраты: /paysupport. Прочитайте условия и нажмите «Согласен, перейти к оплате». Также доступна команда '
          '/stars 100 agree (или 500, 1500).')
 
 
@@ -29,8 +29,8 @@ def command(bot, m, cmd):
     else:
         args = m.get('text', '').split()
         if len(args) != 3 or args[1] not in PACKS or args[2].lower() != 'agree':
-            lines = [f'{coins} коинов — {stars} ⭐ · /stars {key} agree' for key, (coins, stars) in PACKS.items()]
-            bot.api.send(chat, '⭐ Купить коины\n' + '\n'.join(lines) + '\n\n' + TERMS + ('\nПоддержка: ' + contact if contact else '\nПродажи пока отключены: ожидается контакт поддержки владельца.'))
+            lines = [f'{coins} коинов — {stars} ⭐' for key, (coins, stars) in PACKS.items()]
+            bot.api.send(chat, '⭐ Купить коины\n' + '\n'.join(lines) + '\n\n' + TERMS + ('\nПоддержка: ' + contact if contact else '\nПродажи пока отключены: ожидается контакт поддержки владельца.'), [[{'text': f'{coins} коинов · {stars} ⭐', 'callback_data': f'stars:select:{key}'}] for key, (coins, stars) in PACKS.items()] if contact else None)
         elif not contact:
             bot.api.send(chat, 'Оплата пока отключена: не настроена поддержка. Коины можно заработать победами.')
         else:
@@ -86,4 +86,40 @@ def delivery(bot, message):
         order['charge'] = charge
     bot.save()
     bot.safe_send(message['chat']['id'], f"✅ Оплата получена! +{order['coins']} коинов. Баланс: {account['coins']}.\nЗаказ: {data['invoice_payload']}\n/balance · /shop · /paysupport")
+    return True
+
+def callback(bot, q):
+    data = q.get('data', '')
+    if not data.startswith('stars:'):
+        return False
+    message = q.get('message', {})
+    chat = message.get('chat', {})
+    uid = str(q.get('from', {}).get('id', ''))
+    def answer(text):
+        bot.api.call('answerCallbackQuery', callback_query_id=q['id'], text=text)
+    parts = data.split(':')
+    if chat.get('type') != 'private' or str(chat.get('id')) != uid or len(parts) != 3 or not support(bot):
+        answer('Откройте /stars в личном чате бота.')
+        return True
+    action, key = parts[1:]
+    if action == 'select' and key in PACKS:
+        coins, stars = PACKS[key]
+        nonce = secrets.token_hex(12)
+        bot.state.setdefault('star_consents', {})[nonce] = {'uid': uid, 'pack': key, 'created': time.time()}
+        bot.save()
+        bot.api.send(chat['id'], f'⭐ {coins} коинов за {stars} Stars\\n\\n' + TERMS + '\\nПоддержка: ' + support(bot),
+                     [[{'text': f'Согласен, перейти к оплате · {stars} ⭐', 'callback_data': 'stars:pay:' + nonce}]])
+        answer('Проверьте пакет и условия покупки.')
+    elif action == 'pay':
+        consent = bot.state.get('star_consents', {}).get(key)
+        if not consent or consent['uid'] != uid or consent.get('issued') or time.time() - consent['created'] > 3600:
+            answer('Подтверждение устарело или счёт уже выдан. Откройте /stars.')
+            return True
+        # Native Telegram payment UI performs the final payment confirmation.
+        command(bot, {'text': '/stars ' + consent['pack'] + ' agree', 'from': q['from'], 'chat': chat}, '/stars')
+        consent['issued'] = True
+        bot.save()
+        answer('Счёт готов. Оплата — кнопкой Telegram в сообщении.')
+    else:
+        answer('Пакет недоступен. Откройте /stars.')
     return True
