@@ -21,7 +21,6 @@ HELP = '''🔥 Выживает сильнейший
 /players — здоровье участников
 /roles — все 20 ролей
 /myrole — ваша роль и оставшиеся способности
-/votetime 45 — время голосования (создатель и администраторы)
 /balance — баланс коинов
 /profile — победы и награды
 /top — лучшие игроки
@@ -83,8 +82,8 @@ class Bot:
         self.state = json.loads(self.path.read_text()) if self.path.exists() else {'offset': 0, 'ready': [], 'games': {}}
         self.games = self.state['games']
         self.night = max(15, int(os.getenv('NIGHT_SECONDS', '60')))
-        self.discuss = max(15, int(os.getenv('DISCUSS_SECONDS', '60')))
-        self.voting = max(15, int(os.getenv('VOTE_SECONDS', '45')))
+        self.discuss = 60
+        self.voting = 45
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,26 +207,6 @@ class Bot:
             self.update_lobby(chat, g)
         elif cmd == '/help':
             self.api.send(chat, HELP)
-        elif cmd == '/votetime':
-            if not g:
-                self.api.send(chat, 'Сначала создайте игру: /newgame')
-                return
-            if not self.authorized(chat, uid, g):
-                self.api.send(chat, 'Команда доступна создателю игры и администраторам.')
-                return
-            args = text.split()
-            if len(args) != 2 or not args[1].isdigit() or not 15 <= int(args[1]) <= 300:
-                self.api.send(chat, 'Используйте /votetime 45. Допустимо от 15 до 300 секунд.')
-                return
-            seconds = int(args[1])
-            self.state.setdefault('vote_seconds', {})[chat] = seconds
-            if g['phase'] == 'vote':
-                now = time.time()
-                # Shortening never extends an existing deadline or clears votes.
-                g['deadline'] = min(g['deadline'], g.get('phase_started', now) + seconds)
-            self.save()
-            self.api.send(chat, f'🗳 Время голосования: {seconds} сек. Настройка сохранена для этой группы.'
-                          + (' Текущее голосование может завершиться раньше.' if g['phase'] == 'vote' else ''))
         elif cmd == '/newgame':
             if g:
                 self.api.send(chat, 'Игра уже существует. /join — вступить, /players — список.')
@@ -300,7 +279,7 @@ class Bot:
     def run(self):
         self.username = self.api.call('getMe')['username']
         self.api.call('deleteWebhook', drop_pending_updates=False)
-        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль'),('votetime','Время голосования: /votetime 45')]])
+        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
@@ -351,7 +330,7 @@ class SurvivalBot(Bot):
             defaults(p)
             if phase=='night' and p['alive'] and p['role']=='mutant':
                 p['hp']=min(100,p['hp']+5)
-        voting = self.state.get('vote_seconds', {}).get(str(chat), self.voting)
+        voting = self.voting
         game['phase_started'] = time.time()
         game.update(phase=phase, nonce=secrets.token_hex(4), votes={}, deadline=time.time() + {'night': self.night, 'discuss': self.discuss, 'vote': voting}[phase])
         self.save()
