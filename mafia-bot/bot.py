@@ -300,7 +300,7 @@ class Bot:
             stock = account.setdefault('consumables', {})
             if cmd == '/shop':
                 lines = [f"{label} — {price} 🪙 · код: {item}" + (f' · в рюкзаке: {stock.get(item, 0)}' if kind == 'consumable' else ' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
-                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nКупить: /buy fire\nПополнить за Stars: /stars\nНадеть: /equip fire\nТитулы и значки постоянные. Расходники одноразовые: /use код. Только ночью, максимум один расходник за игру (включая владельца).")
+                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nНадеть: /equip fire\nТитулы и значки постоянные. Расходники одноразовые: /use код. Только ночью, максимум один расходник за игру (включая владельца).", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
             elif cmd == '/inventory':
                 lines = [f"{SHOP[item][1]} · /equip {item}" for item in owned if item in SHOP]
                 lines += [f'{SHOP[item][1]} ×{count} · /use {item}' for item, count in stock.items() if item in SHOP and count > 0]
@@ -555,6 +555,18 @@ class SurvivalBot(Bot):
             self.safe_send(chat, f'🗳 Совет арены: {voting} сек. Выберите, кто потеряет 35 здоровья. При ничьей наказания нет.', rows)
 
     def callback(self, q):
+        data = q.get('data', '')
+        if data.startswith('shop:'):
+            parts = data.split(':')
+            message = q.get('message', {})
+            if len(parts) != 3 or parts[1] != 'buy' or parts[2] not in SHOP or not message.get('chat') or q.get('from', {}).get('is_bot'):
+                self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Товар недоступен. Откройте /shop.')
+                return
+            # Each Telegram callback is one purchase; replay uses the same receipt.
+            self.message({'text': '/buy ' + parts[2], 'from': q['from'],
+                          'chat': message['chat'], 'message_id': 'shop-' + q['id']})
+            self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Результат покупки — в сообщении бота.')
+            return
         answer = 'Кнопка устарела или ход недоступен.'
         parts = q.get('data', '').split(':')
         uid = str(q['from']['id'])
