@@ -15,19 +15,21 @@ class KillTests(unittest.TestCase):
         self.bot.games['-1']=self.g
     def command(self,kind='private',text='/kill @victimname'):
         self.bot.message({'text':text,'from':{'id':1},'chat':{'id':1 if kind=='private' else -1,'type':kind}})
-    def confirm(self):
-        data=self.bot.api.messages[-1][2][0][0]['callback_data']
-        q={'id':'q','from':{'id':1},'message':{'chat':{'id':1,'type':'private'}},'data':data}
-        self.bot.callback(q);self.bot.callback(q)
-    def test_confirm_charges_once_and_does_not_publish_buyer(self):
-        self.command();self.assertEqual(self.bot.state['accounts']['1']['coins'],2500);self.assertTrue(self.g['players']['2']['alive'])
-        self.confirm();self.assertEqual(self.bot.state['accounts']['1']['coins'],500);self.assertFalse(self.g['players']['2']['alive'])
-        public=[text for chat,text,k in self.bot.api.messages if chat=='-1'];self.assertEqual(len(public),1);self.assertNotIn('Игрок1',public[0])
-    def test_owned_item_preferred(self):
-        self.bot.state['accounts']['1']['consumables']={'exile':1};self.command();self.confirm()
-        self.assertEqual(self.bot.state['accounts']['1']['coins'],2500);self.assertEqual(self.bot.state['accounts']['1']['consumables']['exile'],0)
-    def test_group_redirect_and_unknown_name(self):
-        self.command('group');self.assertTrue(self.g['players']['2']['alive']);self.assertEqual(self.bot.state['accounts']['1']['coins'],2500)
-        self.command(text='/kill @missingname');self.assertIsNone(self.bot.api.messages[-1][2])
-    def test_changed_username_not_resolved_to_old_owner(self):
-        self.bot.remember_username({'id':2,'username':'newname'});self.command();self.assertIsNone(self.bot.api.messages[-1][2])
+    def test_removed_commands_redirect_without_spending(self):
+        for text in ('/kill @victimname','/use medkit','/equip fire','/unequip','/buy fire'):
+            self.command(text=text)
+            self.assertIn('через кнопки',self.bot.api.messages[-1][1])
+            self.assertEqual(self.bot.state['accounts']['1']['coins'],2500)
+            self.assertTrue(self.g['players']['2']['alive'])
+    def test_inventory_buttons_equip_and_remove(self):
+        self.bot.state['accounts']['1']['inventory']=['fire']
+        self.command(text='/inventory')
+        rows=self.bot.api.messages[-1][2]
+        self.assertEqual(rows[0][0]['callback_data'],'inv:equip:fire')
+        for data in ('inv:equip:fire','inv:unequip:all'):
+            self.bot.callback({'id':data,'from':{'id':1},'message':{'chat':{'id':1,'type':'private'}},'data':data})
+        self.assertEqual(self.bot.state['accounts']['1']['equipped'],{})
+    def test_group_inventory_button_cannot_apply(self):
+        self.bot.state['accounts']['1']['inventory']=['fire']
+        self.bot.callback({'id':'q','from':{'id':1},'message':{'chat':{'id':-1,'type':'group'}},'data':'inv:equip:fire'})
+        self.assertNotIn('equipped',self.bot.state['accounts']['1'])
