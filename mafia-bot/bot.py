@@ -235,6 +235,27 @@ class Bot:
         self.save()
 
 
+    def show_exile_targets(self, uid, chat):
+        match = next(((c, g) for c, g in self.games.items() if uid in g['players'] and g['phase'] != 'lobby'), None)
+        if not match:
+            self.api.send(chat, '⚔️ Тайный приговор сохранён в рюкзаке. Кнопки живых соперников появятся в ЛС с наступлением ночи в вашей игре.')
+            return
+        game_chat, game = match
+        player = game['players'][uid]
+        if not player['alive'] or player.get('consumable_used') or game.get('secret_exile_used'):
+            self.api.send(chat, '⚔️ Предмет сохранён для следующей игры: вы выбыли или лимит этого матча уже исчерпан.')
+            return
+        rows = [[{'text': '⚔️ Убрать: ' + p['name'],
+                  'callback_data': f"exile:{game_chat}:{game['nonce']}:{uid}:{target}"}]
+                for target, p in game['players'].items() if target != uid and p['alive']]
+        if not rows:
+            self.api.send(chat, 'Нет живых соперников. Предмет остаётся в рюкзаке.')
+            return
+        available = game['phase'] == 'night' and time.time() < game['deadline']
+        text = ('⚔️ Покупка готова! Нажмите на живого соперника ниже, чтобы сразу убрать его из матча.'
+                if available else '⚔️ Живые соперники показаны ниже. Применить приговор можно только ночью — бот пришлёт обновлённые кнопки.')
+        self.api.send(chat, text + '\nИмя заказчика в группе скрыто. Один приговор на весь матч; расходует ваш личный лимит расходника.', rows)
+
     def use_consumable(self, m, uid, chat):
         args = m.get('text', '').split()
         item = args[1].lower() if len(args) == 2 else ''
@@ -261,10 +282,7 @@ class Bot:
             if game.get('secret_exile_used'):
                 self.api.send(chat, 'Тайный приговор уже использован в этом матче. Предмет остаётся в рюкзаке.')
                 return
-            rows = [[{'text': '⚔️ Исключить: ' + p['name'],
-                      'callback_data': f"exile:{game_chat}:{game['nonce']}:{uid}:{target}"}]
-                    for target, p in game['players'].items() if target != uid and p['alive']]
-            self.api.send(chat, '⚔️ Выберите соперника для тайного приговора. Он сразу покинет матч. Имя заказчика не появится в группе. Один приговор на матч; расходует ваш лимит расходника.', rows)
+            self.show_exile_targets(uid, chat)
             return
         if item == 'medkit':
             if player['hp'] >= 100:
@@ -423,7 +441,9 @@ class Bot:
                     if receipt:
                         self.state.setdefault('shop_receipts', {})[receipt] = item
                     self.save()
-                    self.api.send(chat, f"✅ Куплено: {label}. Баланс: {'∞' if unlimited else account['coins']} 🪙.\n" + (f"Использовать: /use {item}" if kind == 'consumable' else f"Надеть: /equip {item}"))
+                    self.api.send(chat, f"✅ Куплено: {label}. Баланс: {'∞' if unlimited else account['coins']} 🪙.\n" + (("Выберите соперника кнопкой ниже." if item == 'exile' else f"Использовать: /use {item}") if kind == 'consumable' else f"Надеть: /equip {item}"))
+                    if item == 'exile':
+                        self.show_exile_targets(uid, chat)
                 elif kind == 'consumable':
                     self.api.send(chat, 'Расходники используются командой /use ' + item)
                 elif item not in owned:
@@ -646,6 +666,8 @@ class SurvivalBot(Bot):
             for uid, p in game['players'].items():
                 if p['alive']:
                     self.safe_send(uid, f"❤️ {p['hp']} | Усиление атаки: +{p['power']}\nВыберите: атаковать, защищаться или искать припасы. Последний выбор учитывается.", self.buttons(chat, game, uid))
+                    if self.state.get('accounts', {}).get(uid, {}).get('consumables', {}).get('exile', 0) > 0 and not p.get('consumable_used') and not game.get('secret_exile_used'):
+                        self.show_exile_targets(uid, uid)
         elif phase == 'discuss':
             for uid,p in game['players'].items():
                 if p['alive'] and p['role']=='agitator' and not p['boost_used']:
