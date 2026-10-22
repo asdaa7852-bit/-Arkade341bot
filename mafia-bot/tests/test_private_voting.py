@@ -21,7 +21,8 @@ class VoteTests(unittest.TestCase):
         def click(uid,target,private=True):
             self.bot.callback({'id':'q','from':{'id':int(uid)},'data':f'v:-1:{self.g["nonce"]}:{target}','message':{'chat':{'id':int(uid) if private else -1,'type':'private' if private else 'group'}}})
         click('1','2',False);self.assertFalse(self.g['votes'])
-        click('1','3');click('1','2');click('3','2');click('2','0')
+        click('1','2');click('1','3');click('3','2');click('2','0')
+        self.assertEqual(self.g['votes']['1'],'2')
         self.g['deadline']=0;self.bot.tick()
         self.assertFalse(self.g['players']['2']['alive']);self.assertEqual(self.g['players']['2']['hp'],0)
         report=next(text for chat,text,rows in self.api.messages if text.startswith('🗳 Итоги'))
