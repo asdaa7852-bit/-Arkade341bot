@@ -555,6 +555,8 @@ class SurvivalBot(Bot):
             self.safe_send(chat, f'🗳 Совет арены: {voting} сек. Выберите, кто потеряет 35 здоровья. При ничьей наказания нет.', rows)
 
     def callback(self, q):
+        if payments.callback(self, q):
+            return
         data = q.get('data', '')
         if data.startswith('shop:'):
             parts = data.split(':')
