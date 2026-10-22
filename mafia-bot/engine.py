@@ -18,7 +18,7 @@ ROLES = {
  'ghost': '👤 Призрак — один раз скрывается от атак вместо хода',
  'vampire': '🩸 Вампир — лечится на треть реально нанесённого атакой урона',
  'impostor': '🎭 Самозванец — разведка показывает другую роль',
- 'agitator': '📢 Агитатор — раз за игру удваивает свой голос до начала голосования',
+ 'agitator': '💋 Путана — при защите дополнительно снижает обычный входящий урон на 5',
  'immune': '⚖️ Неприкосновенный — один раз блокирует ночной урон от текущего яда',
  'hunter': '🐺 Охотник — гибель тайной цели даёт постоянные +10 к атаке',
  'mutant': '🧬 Мутант — в начале ночи восстанавливает 5 HP',
@@ -44,14 +44,14 @@ ROLE_PERKS = {
  'ghost': ('Леденящий ужас', 'down'),
  'vampire': ('Кровавый укус', 'harm'),
  'impostor': ('Дезориентация', 'down'),
- 'agitator': ('Воодушевление', 'up'),
+ 'agitator': ('Ночь страсти', 'up_half'),
  'immune': ('Восстановление', 'heal'),
  'hunter': ('Охотничий азарт', 'up'),
  'mutant': ('Регенеративный импульс', 'heal'),
  'avenger': ('Карающий огонь', 'harm'),
 }
 PERK_EFFECTS = {'heal': '+33 HP (не выше 100)', 'harm': '33 прямого урона',
-                'up': '+33% к атаке цели этой ночью', 'down': '−33% к атаке цели этой ночью'}
+                'up': '+33% к атаке цели этой ночью', 'down': '−33% к атаке цели этой ночью', 'up_half': '+50% к атаке цели этой ночью'}
 for role, (name, effect) in ROLE_PERKS.items():
     ROLES[role] += ' · Раз за игру: ' + name + ' — ' + PERK_EFFECTS[effect] + ' другому игроку вместо хода'
 RNG = random.SystemRandom()
@@ -126,7 +126,7 @@ def vote_counts(g):
     for uid, target in g['votes'].items():
         p = ps.get(uid)
         if p and p['alive'] and (target == '0' and not p.get('abstain_used') or target in ps and ps[target]['alive'] and target != uid):
-            counts[target] += 2 if p.get('boosted') else 1
+            counts[target] += 1
     return counts
 
 
@@ -164,7 +164,7 @@ def resolve_night(g, rng=None):
     notes=[];attacks=[];trap_damage=collections.Counter();poison_damage={};pending=[]
     # All new perks resolve simultaneously. Multiple attack buffs/debuffs
     # do not stack beyond one third; opposing effects cancel.
-    attack_perks=collections.Counter();perk_damage=collections.Counter()
+    attack_up=collections.Counter();attack_down=collections.Counter();perk_damage=collections.Counter()
     for u,p in alive.items():
         kind,target=actions[u]
         if kind != 'perk':
@@ -173,7 +173,8 @@ def resolve_night(g, rng=None):
         name,effect=ROLE_PERKS[p['role']]
         if effect=='heal': ps[target]['hp']=min(100,ps[target]['hp']+33)
         elif effect=='harm': perk_damage[target]+=33
-        else: attack_perks[target]+=1 if effect=='up' else -1
+        elif effect=='down': attack_down[target]=33
+        else: attack_up[target]=max(attack_up[target],50 if effect=='up_half' else 33)
         notes.append((u,'✨ ' + name + ': ' + ps[target]['name'] + ' — ' + PERK_EFFECTS[effect] + '.'))
         notes.append((target,'✨ На вас действует приём: ' + PERK_EFFECTS[effect] + '.'))
     # Old poison ticks now; newly applied poison starts next night.
@@ -200,8 +201,8 @@ def resolve_night(g, rng=None):
         elif kind in ('attack','shot'):
             dmg=45 if kind=='shot' else 25+start_power[u]+(10 if p['role']=='mafia' else 0)+(15 if p['role']=='berserker' and start_hp[u]<=40 else 0)+(10 if p.get('bounty') else 0)
             if kind=='attack' and p['role']=='assassin' and actions[target][0]=='loot': dmg+=15
-            modifier=max(-1,min(1,attack_perks[u]))
-            dmg=max(0,(dmg*(100+33*modifier)+50)//100)
+            modifier=attack_up[u]-attack_down[u]
+            dmg=max(0,(dmg*(100+modifier)+50)//100)
             attacks.append((u,target,dmg,kind=='shot'))
     # Theft cannot erase a simultaneous loot gain; attacks use pre-night power.
     for u,t,amount in pending:
@@ -215,7 +216,9 @@ def resolve_night(g, rng=None):
         normal=sum(a[2] for a in incoming if not a[3]);piercing=sum(a[2] for a in incoming if a[3])
         kind=actions[t][0]
         if kind=='hide': normal=piercing=0
-        elif kind=='guard': normal=(normal+1)//2
+        elif kind=='guard':
+            normal=(normal+1)//2
+            if p['role']=='agitator': normal=max(0,normal-5)
         if kind=='shelter': normal=max(0,normal-40)
         if p['role']=='armor': normal=max(0,normal-10)
         actual_damage[t]=normal+piercing
