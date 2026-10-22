@@ -18,7 +18,7 @@ ROLES = {
  'ghost': '👤 Призрак — один раз скрывается от атак вместо хода',
  'vampire': '🩸 Вампир — лечится на треть реально нанесённого атакой урона',
  'impostor': '🎭 Самозванец — разведка показывает другую роль',
- 'agitator': '💋 Путана — при защите дополнительно снижает обычный входящий урон на 5',
+ 'agitator': '💋 Путана — каждую ночь ходит в гости: отменяет ночное действие выбранного игрока, включая разведку',
  'immune': '⚖️ Неприкосновенный — один раз блокирует ночной урон от текущего яда',
  'hunter': '🐺 Охотник — гибель тайной цели даёт постоянные +10 к атаке',
  'mutant': '🧬 Мутант — в начале ночи восстанавливает 5 HP',
@@ -27,7 +27,7 @@ ROLES = {
 SPECIAL = {'sniper':('shot',1), 'thief':('steal',2), 'poisoner':('poison',1),
            'alchemist':('elixir',1), 'engineer':('shelter',2), 'ghost':('hide',1)}
 LABELS = {'shot':'🎯 Выстрел', 'steal':'🦹 Кража', 'poison':'☠️ Яд', 'elixir':'🧪 Эликсир', 'shelter':'🧱 Укрытие', 'hide':'👤 Скрыться'}
-TARGETED = {'shot','steal','poison','attack'}
+TARGETED = {'shot','steal','poison','attack','visit'}
 ROLE_PERKS = {
  'mafia': ('Боевой приказ', 'up'),
  'doctor': ('Переливание', 'heal'),
@@ -115,6 +115,7 @@ def valid_action(players, uid, value):
     if kind == 'perk':
         return p['role'] in ROLE_PERKS and not p.get('perk_used') and target != uid and target in players and players[target]['alive']
     if kind in TARGETED and (target==uid or target not in players or not players[target]['alive']): return False
+    if kind == 'visit': return p['role'] == 'agitator'
     if kind in ('guard','loot','attack'): return True
     ability = SPECIAL.get(p['role'])
     return bool(ability and kind==ability[0] and p.get('used',0)<ability[1])
@@ -162,6 +163,12 @@ def resolve_night(g, rng=None):
     start_hp={u:p['hp'] for u,p in alive.items()}
     start_power={u:p['power'] for u,p in alive.items()}
     notes=[];attacks=[];trap_damage=collections.Counter();poison_damage={};pending=[]
+    # Visits cancel active choices before abilities and attacks resolve.
+    visits=[(u,t) for u,(kind,t) in actions.items() if kind=='visit']
+    for u,target in visits:
+        actions[target]=('distracted',None)
+        notes.append((u,'💋 Вы отвлекли игрока ' + ps[target]['name'] + '. Его ночное действие отменено.'))
+        notes.append((target,'💋 К вам пришли в гости. Вы отвлеклись и пропустили ночное действие.'))
     # All new perks resolve simultaneously. Multiple attack buffs/debuffs
     # do not stack beyond one third; opposing effects cancel.
     attack_up=collections.Counter();attack_down=collections.Counter();perk_damage=collections.Counter()
@@ -186,7 +193,7 @@ def resolve_night(g, rng=None):
         p['poison']=[n-1 for n in p['poison'] if n>1]
     for u,p in alive.items():
         kind,target=actions[u]
-        if kind not in ('attack','guard','loot','perk'): p['used']+=1
+        if kind not in ('attack','guard','loot','perk','visit','distracted'): p['used']+=1
         if kind=='loot':
             p['hp']=min(100,p['hp']+(25 if p['role']=='doctor' else 15))
             p['power']=min(20,p['power']+5)
@@ -218,7 +225,6 @@ def resolve_night(g, rng=None):
         if kind=='hide': normal=piercing=0
         elif kind=='guard':
             normal=(normal+1)//2
-            if p['role']=='agitator': normal=max(0,normal-5)
         if kind=='shelter': normal=max(0,normal-40)
         if p['role']=='armor': normal=max(0,normal-10)
         actual_damage[t]=normal+piercing
