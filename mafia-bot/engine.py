@@ -35,7 +35,7 @@ def setup(players):
     roles = RNG.sample(list(ROLES), len(players))
     for p, role in zip(players.values(), roles):
         p.update(role=role, hp=100, alive=True, power=0, used=0, poison=[], boosted=False,
-                 boost_used=False, immunity_used=False, bounty=False)
+                 boost_used=False, immunity_used=False, abstain_used=False, bounty=False)
     for uid,p in players.items():
         if p['role']=='hunter':
             p['prey']=RNG.choice([u for u in players if u!=uid])
@@ -43,7 +43,7 @@ def setup(players):
 
 def defaults(p):
     if p['role']=='citizen': p['role']='armor'
-    for k,v in {'hp':100,'power':0,'used':0,'poison':[],'boosted':False,'boost_used':False,'immunity_used':False,'bounty':False}.items():
+    for k,v in {'hp':100,'power':0,'used':0,'poison':[],'boosted':False,'boost_used':False,'immunity_used':False,'abstain_used':False,'bounty':False}.items():
         if k not in p: p[k]=v.copy() if isinstance(v,list) else v
 
 
@@ -68,7 +68,7 @@ def vote_counts(g):
     counts = collections.Counter()
     for uid, target in g['votes'].items():
         p = ps.get(uid)
-        if p and p['alive'] and (target == '0' or target in ps and ps[target]['alive'] and target != uid):
+        if p and p['alive'] and (target == '0' and not p.get('abstain_used') or target in ps and ps[target]['alive'] and target != uid):
             counts[target] += 2 if p.get('boosted') else 1
     return counts
 
@@ -77,7 +77,9 @@ def council(g):
     ps = g['players']
     counts = vote_counts(g)
     counts.pop('0', None)  # Abstentions are shown but are not a candidate.
-    for p in ps.values():
+    for uid, p in ps.items():
+        if p['alive'] and g['votes'].get(uid) == '0' and not p.get('abstain_used'):
+            p['abstain_used'] = True
         p['boosted'] = False
     ranks = counts.most_common()
     if not ranks or len(ranks) > 1 and ranks[0][1] == ranks[1][1]:
