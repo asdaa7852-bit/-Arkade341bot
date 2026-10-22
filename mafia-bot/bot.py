@@ -412,7 +412,7 @@ class Bot:
                 if uid not in self.state['ready']:
                     self.state['ready'].append(uid)
                     self.save()
-                self.api.send(chat, '✅ Готово! Теперь добавьте бота в группу и отправьте /newgame.\n\n' + HELP)
+                self.api.send(chat, '✅ Готово! Добавьте бота в свою группу кнопкой ниже, затем отправьте /start в группе. Любой участник может создать игру — разрешение владельца бота не требуется.\n\n' + HELP, [[{'text': '➕ Добавить в свою группу', 'url': f'https://t.me/{self.username}?startgroup=arena'}]])
             else:
                 self.api.send(chat, HELP)
             return
@@ -517,7 +517,9 @@ class Bot:
         self.api.call('setMyCommands', scope={'type': 'default'}, commands=commands)
 
     def run(self):
-        self.username = self.api.call('getMe')['username']
+        me = self.api.call('getMe')
+        self.username = me['username']
+        logging.info('Добавление бота в группы разрешено Telegram: %s', me.get('can_join_groups', False))
         self.api.call('deleteWebhook', drop_pending_updates=False)
         self.configure_commands()
         logging.info('Бот запущен: @%s', self.username)
