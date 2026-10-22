@@ -80,11 +80,11 @@ class PerkTests(unittest.TestCase):
         self.assertIn('Путана', ROLES['agitator'])
         self.assertNotIn('Агитатор', ROLES['agitator'])
 
-    def test_courtesan_guard_reduces_normal_damage(self):
+    def test_courtesan_guard_has_standard_reduction(self):
         g = self.game('doctor'); g['players']['2']['role'] = 'agitator'
         g['votes'] = {'1': '2', '2': 'guard'}
         resolve_night(g)
-        self.assertEqual(g['players']['2']['hp'], 92)
+        self.assertEqual(g['players']['2']['hp'], 87)
 
     def test_private_target_menu_choice_lock_and_saved_once_limit(self):
         with tempfile.TemporaryDirectory() as d:
@@ -100,3 +100,23 @@ class PerkTests(unittest.TestCase):
             resolve_night(g); bot.save()
             restored = SurvivalBot(API(), bot.path)
             self.assertTrue(restored.games['-1']['players']['1']['perk_used'])
+
+    def test_visit_blocks_scout_and_attack_and_does_not_spend_charge(self):
+        for role, action in [('detective','loot'),('sniper','shot~3'),('doctor','perk~3')]:
+            g = self.game('agitator');g['players']['2']['role']=role
+            g['votes']={'1':'visit~2','2':action,'3':'loot'}
+            self.assertTrue(valid_action(g['players'],'1','visit~2'))
+            _, notes = resolve_night(g)
+            self.assertEqual(g['players']['3']['hp'],100)
+            self.assertEqual(g['players']['2']['power'],0)
+            self.assertEqual(g['players']['2']['used'],0)
+            self.assertFalse(g['players']['2']['perk_used'])
+            self.assertFalse(any(text.startswith('🔎') for _,text in notes))
+            self.assertTrue(valid_action(g['players'],'1','visit~3'))
+    def test_visit_invalid_targets_and_role(self):
+        g = self.game('agitator')
+        for target in ('1','99'):
+            self.assertFalse(valid_action(g['players'],'1','visit~'+target))
+        g['players']['2']['alive']=False
+        self.assertFalse(valid_action(g['players'],'1','visit~2'))
+        self.assertFalse(valid_action(g['players'],'3','visit~1'))
