@@ -104,6 +104,33 @@ class Bot:
         member = self.api.call('getChatMember', chat_id=int(chat), user_id=int(user))
         return member['status'] in ('creator', 'administrator')
 
+
+    def update_lobby(self, chat, game, status=None):
+        names = '\n'.join(f"{i}. {p['name']}" for i, p in enumerate(game['players'].values(), 1))
+        if status is None:
+            if 'autostart_at' in game:
+                stamp = time.strftime('%H:%M:%S UTC', time.gmtime(game['autostart_at']))
+                status = f'⏳ Автостарт через 90 секунд после /start (в {stamp}). Нужно минимум 4 игрока.'
+            else:
+                status = 'Набор открыт. /start — автостарт через 90 секунд; /begin — начать.'
+        text = f"🎭 Участники: {len(game['players'])}/20\n" + (names or 'Пока никто не присоединился.') + '\n\n' + status + '\n/join — вступить · /leave — выйти\nСначала нажмите /start в личном чате бота.'
+        keyboard = {'inline_keyboard': [[{'text': 'Открыть бота', 'url': f'https://t.me/{self.username}?start=mafia'}]]}
+        if text == game.get('lobby_text'):
+            return
+        mid = game.get('lobby_message_id')
+        if mid:
+            try:
+                self.api.call('editMessageText', chat_id=chat, message_id=mid, text=text, reply_markup=keyboard)
+            except RuntimeError:
+                logging.warning('Не удалось обновить список участников в чате %s', chat)
+                return
+        else:
+            result = self.api.send(chat, text, keyboard['inline_keyboard'])
+            if isinstance(result, dict) and 'message_id' in result:
+                game['lobby_message_id'] = result['message_id']
+        game['lobby_text'] = text
+        self.save()
+
     def active_elsewhere(self, uid, chat):
         return any(c != chat and uid in g['players'] for c, g in self.games.items())
 
@@ -147,10 +174,8 @@ class Bot:
         g = self.games.get(chat)
         if cmd == '/start':
             if not g:
-                self.message(dict(m, text='/newgame'))
-                g = self.games.get(chat)
-                if not g:
-                    return
+                g = {'owner': uid, 'phase': 'lobby', 'players': {}}
+                self.games[chat] = g
             if g['phase'] != 'lobby':
                 self.api.send(chat, 'Игра уже началась.')
                 return
@@ -158,12 +183,11 @@ class Bot:
                 self.api.send(chat, 'Команда доступна создателю игры и администраторам.')
                 return
             if 'autostart_at' in g:
-                remaining = max(0, int(g['autostart_at'] - time.time() + 0.999))
-                self.api.send(chat, f'⏳ Автостарт уже включён. Осталось {remaining} сек. /join — вступить.')
+                self.update_lobby(chat, g)
                 return
             g['autostart_at'] = time.time() + 90
             self.save()
-            self.api.send(chat, '⏳ Игра начнётся автоматически через 90 секунд при наличии 4–20 игроков.\n/join — вступить. Каждый сначала нажимает /start в личном чате бота.\n/stop — отменить.')
+            self.update_lobby(chat, g)
         elif cmd == '/help':
             self.api.send(chat, HELP)
         elif cmd == '/votetime':
@@ -192,7 +216,7 @@ class Bot:
                 return
             self.games[chat] = {'owner': uid, 'phase': 'lobby', 'players': {}}
             self.save()
-            self.api.send(chat, '🎭 Набор открыт! От 4 до 20 игроков.\nСначала откройте бота, нажмите /start, затем /join здесь.\n/begin — начать игру.', [[{'text': 'Открыть бота', 'url': f'https://t.me/{self.username}?start=mafia'}]])
+            self.update_lobby(chat, self.games[chat])
         elif not g:
             self.api.send(chat, 'Нет игры. Создайте: /newgame')
         elif cmd == '/players':
@@ -209,14 +233,14 @@ class Bot:
             elif self.safe_send(uid, '✅ Вы присоединились к игре. Ожидайте раздачи ролей.'):
                 g['players'][uid] = {'name': m['from'].get('first_name', 'Игрок')[:40] + ' ·' + uid[-4:], 'alive': True, 'role': 'citizen'}
                 self.save()
-                self.api.send(chat, f"✅ Игрок принят. Всего: {len(g['players'])}/20")
+                self.update_lobby(chat, g)
             else:
                 self.api.send(chat, 'Не могу написать вам. Откройте личный чат бота и нажмите /start.')
         elif cmd == '/leave':
             if g['phase'] == 'lobby':
                 g['players'].pop(uid, None)
                 self.save()
-                self.api.send(chat, 'Вы вышли из набора.')
+                self.update_lobby(chat, g)
             else:
                 self.api.send(chat, 'После начала выйти нельзя. Без ночного хода включается защита.')
         elif cmd in ('/begin', '/stop'):
@@ -224,6 +248,8 @@ class Bot:
                 self.api.send(chat, 'Команда доступна создателю игры и администраторам.')
                 return
             if cmd == '/stop':
+                if g['phase'] == 'lobby':
+                    self.update_lobby(chat, g, '❌ Набор отменён.')
                 del self.games[chat]
                 self.save()
                 self.api.send(chat, 'Игра отменена. /newgame — создать новую.')
@@ -249,6 +275,7 @@ class Bot:
                     self.save()
                     self.api.send(chat, 'Раздать все роли не удалось. Игра отменена. Создайте новую: /newgame')
                     return
+                self.update_lobby(chat, g, '✅ Набор завершён. Игра началась!')
                 g['round'] = 1
                 self.phase(chat, g, 'night')
 
@@ -372,6 +399,7 @@ class SurvivalBot(Bot):
                     del g['autostart_at']
                     self.save()
                     if len(g['players']) < 4:
+                        self.update_lobby(chat, g, '⏳ Автостарт отменён: меньше 4 игроков. /start — новый отсчёт 90 секунд.')
                         self.safe_send(chat, '⏳ Автостарт отменён: нужно минимум 4 игрока. Набор остаётся открытым. /start — запустить новый отсчёт на 90 секунд.')
                     else:
                         self.message({'text': '/begin', 'from': {'id': int(g['owner'])},
