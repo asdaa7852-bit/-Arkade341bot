@@ -400,6 +400,31 @@ class Bot:
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
         cmd = command[0]
+        if cmd == '/adminprofile':
+            if self.state.get('coin_owner_id') != uid:
+                self.api.send(chat, '⛔ Команда доступна только владельцу бота.')
+                return
+            if m['chat']['type'] != 'private':
+                self.api.send(chat, 'Просмотр профилей администраторов доступен в ЛС бота.')
+                return
+            args = text.split()
+            if len(args) > 2 or (len(args) == 2 and args[1] not in BOT_ADMIN_IDS):
+                self.api.send(chat, 'Укажите ID администратора: /adminprofile 5060019034')
+                return
+            targets = [args[1]] if len(args) == 2 else sorted(BOT_ADMIN_IDS)
+            for target in targets:
+                account = self.state.get('accounts', {}).get(target, {})
+                wins = account.get('wins', 0)
+                badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
+                inventory = [SHOP[item][1] for item in account.get('inventory', []) if item in SHOP]
+                inventory += [f'{SHOP[item][1]} ×{count}' for item, count in account.get('consumables', {}).items() if item in SHOP and count > 0]
+                profile = (f"Профиль администратора: {account.get('name', 'Игрок')}\n🆔 {target}\n{cosmetics(account)}"
+                           f"\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}"
+                           f"\n🪙 Доступ: безлимит · накоплено: {account.get('coins', 0)}"
+                           "\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет')
+                           + "\n\nИнвентарь:\n" + ('\n'.join(inventory) or 'Пусто'))
+                getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, target, profile)
+            return
         if m['chat']['type'] in ('group', 'supergroup') and cmd not in { '/' + c for c, _ in GROUP_COMMANDS }:
             if cmd in {'/shop', '/buy', '/inventory', '/equip', '/unequip', '/transfer', '/balance', '/profile', '/top', '/stars', '/terms', '/paysupport', '/support', '/myrole', '/use', '/kill'}:
                 self.api.send(chat, 'Эта команда доступна в личном чате бота.',
