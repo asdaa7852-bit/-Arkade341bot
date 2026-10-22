@@ -15,7 +15,7 @@ class ShopTests(unittest.TestCase):
         self.account={'coins':500,'wins':5,'games':10,'name':'Игрок'}
         self.bot.state['accounts']={'1':self.account}
     def cmd(self,text):
-        self.bot.message({'text':text,'from':{'id':1},'chat':{'id':1,'type':'private'}})
+        self.bot.message({'text':text,'from':{'id':1},'chat':{'id':1,'type':'private'}}, button_action=True)
     def test_purchase_once_and_persistence(self):
         self.cmd('/buy fire');self.cmd('/buy fire')
         self.assertEqual(self.account['coins'],350)
