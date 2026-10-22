@@ -33,6 +33,21 @@ def cosmetics(account):
                       if (item := selected.get(kind)) in SHOP and item in owned and SHOP[item][0] == kind)
 
 
+GROUP_COMMANDS = [
+    ('start', 'Набор и автостарт через 90 секунд'), ('newgame', 'Открыть набор'),
+    ('join', 'Вступить в игру'), ('leave', 'Выйти из набора'),
+    ('begin', 'Начать игру'), ('players', 'Участники и здоровье'),
+    ('stop', 'Отменить игру'), ('help', 'Игровая справка'), ('roles', 'Все 20 ролей'),
+]
+GROUP_HELP = '''🎮 Управление игрой
+/start — набор и автостарт через 90 секунд
+/join — вступить · /leave — выйти
+/begin — начать · /stop — отменить
+/players — участники · /roles — роли
+/newgame — набор без таймера
+
+Полный список команд, профиль и магазин — в личном чате бота.'''
+
 HELP = '''🔥 Выживает сильнейший
 /start — набор и автоматический старт через 90 секунд
 /newgame — новая арена
@@ -285,6 +300,11 @@ class Bot:
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
         cmd = command[0]
+        if m['chat']['type'] in ('group', 'supergroup') and cmd not in { '/' + c for c, _ in GROUP_COMMANDS }:
+            if cmd in {'/shop', '/buy', '/inventory', '/equip', '/unequip', '/transfer', '/balance', '/profile', '/top', '/stars', '/terms', '/paysupport', '/support', '/myrole', '/use'}:
+                self.api.send(chat, 'Эта команда доступна в личном чате бота.',
+                              [[{'text': 'Открыть бота', 'url': f'https://t.me/{self.username}?start=menu'}]])
+            return
         if cmd == '/use':
             self.use_consumable(m, uid, chat)
             return
@@ -407,7 +427,7 @@ class Bot:
             self.save()
             self.update_lobby(chat, g)
         elif cmd == '/help':
-            self.api.send(chat, HELP)
+            self.api.send(chat, GROUP_HELP)
         elif cmd == '/newgame':
             if g:
                 self.api.send(chat, 'Игра уже существует. /join — вступить, /players — список.')
@@ -477,10 +497,16 @@ class Bot:
                 g['round'] = 1
                 self.phase(chat, g, 'night')
 
+    def configure_commands(self):
+        self.api.call('setMyCommands', scope={'type': 'all_private_chats'}, commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('use','Использовать предмет: /use medkit'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
+        commands = [{'command': c, 'description': d} for c, d in GROUP_COMMANDS]
+        self.api.call('setMyCommands', scope={'type': 'all_group_chats'}, commands=commands)
+        self.api.call('setMyCommands', scope={'type': 'default'}, commands=commands)
+
     def run(self):
         self.username = self.api.call('getMe')['username']
         self.api.call('deleteWebhook', drop_pending_updates=False)
-        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('use','Использовать предмет: /use medkit'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
+        self.configure_commands()
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
@@ -558,6 +584,9 @@ class SurvivalBot(Bot):
         if payments.callback(self, q):
             return
         data = q.get('data', '')
+        if data.startswith('shop:') and q.get('message', {}).get('chat', {}).get('type') != 'private':
+            self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Магазин теперь доступен в личном чате бота: /shop', show_alert=True)
+            return
         if data.startswith('shop:'):
             parts = data.split(':')
             message = q.get('message', {})
