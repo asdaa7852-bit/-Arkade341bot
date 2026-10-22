@@ -31,8 +31,37 @@ TARGETED = {'shot','steal','poison','attack'}
 RNG = random.SystemRandom()
 
 
-def setup(players):
-    roles = RNG.sample(list(ROLES), len(players))
+def choose_roles(players, history=None):
+    history = history or {}
+    users = list(players)
+    # Randomized bipartite matching preserves unique roles while avoiding history.
+    for cooldown in (3, 2, 1, 0):
+        candidates = {}
+        for uid in users:
+            excluded = set(history.get(uid, [])[-cooldown:]) if cooldown else set()
+            options = [role for role in ROLES if role not in excluded]
+            RNG.shuffle(options)
+            candidates[uid] = options
+        order = users.copy()
+        RNG.shuffle(order)
+        assigned = {}
+        def place(uid, seen):
+            for role in candidates[uid]:
+                if role in seen:
+                    continue
+                seen.add(role)
+                if role not in assigned or place(assigned[role], seen):
+                    assigned[role] = uid
+                    return True
+            return False
+        if all(place(uid, set()) for uid in order):
+            result = {uid: role for role, uid in assigned.items()}
+            return [result[uid] for uid in users]
+    raise ValueError('Слишком много игроков для уникальных ролей')
+
+
+def setup(players, history=None):
+    roles = choose_roles(players, history)
     for p, role in zip(players.values(), roles):
         p.update(role=role, hp=100, alive=True, power=0, used=0, poison=[], boosted=False,
                  boost_used=False, immunity_used=False, abstain_used=False, bounty=False)
