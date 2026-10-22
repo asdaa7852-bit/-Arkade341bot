@@ -119,6 +119,26 @@ class API:
                 raise RuntimeError('Ошибка соединения с Telegram') from None
 
 
+
+    def animation(self, chat, content):
+        boundary = 'Arena' + secrets.token_hex(16)
+        prefix = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{chat}\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="animation"; filename="arena.mp4"\r\n'
+            'Content-Type: video/mp4\r\n\r\n'
+        ).encode()
+        body = prefix + content + f'\r\n--{boundary}--\r\n'.encode()
+        req = urllib.request.Request(self.base + 'sendAnimation', body,
+                                     {'Content-Type': 'multipart/form-data; boundary=' + boundary})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                result = json.load(response)
+            if not result.get('ok'):
+                raise RuntimeError('Telegram отклонил анимацию')
+            return result['result']
+        except Exception:
+            raise RuntimeError('Не удалось отправить анимацию') from None
+
     def send(self, chat, text, keyboard=None):
         params = {'chat_id': chat, 'text': text}
         if keyboard:
@@ -155,6 +175,29 @@ class Bot:
         except RuntimeError:
             logging.warning('Не удалось доставить сообщение в чат %s', chat)
             return False
+
+
+    def intro(self, chat):
+        # Failure to send media must never prevent the normal welcome.
+        try:
+            cached = self.state.get('intro_animation_v1')
+            if cached:
+                result = self.api.call('sendAnimation', chat_id=chat, animation=cached)
+            else:
+                upload = getattr(self.api, 'animation', None)
+                if upload is None:
+                    return
+                import base64
+                asset = Path(__file__).parent / 'assets' / 'arena_intro.mp4.b64'
+                result = upload(chat, base64.b64decode(asset.read_text(), validate=True))
+            file_id = result.get('animation', {}).get('file_id') if isinstance(result, dict) else None
+            if file_id and file_id != cached:
+                self.state['intro_animation_v1'] = file_id
+                self.save()
+            logging.info('Стартовая анимация отправлена')
+        except Exception:
+            self.state.pop('intro_animation_v1', None)
+            logging.warning('Стартовая анимация недоступна; показываем приветствие')
 
     def authorized(self, chat, user, game):
         if game['owner'] == user:
@@ -412,6 +455,7 @@ class Bot:
                 if uid not in self.state['ready']:
                     self.state['ready'].append(uid)
                     self.save()
+                self.intro(chat)
                 self.api.send(chat, '⚔️ ДОБРО ПОЖАЛОВАТЬ НА АРЕНУ!\n\nЗдесь выживает сильнейший.\n🎭 20 тайных ролей — каждый матч новая судьба.\n🌑 Ночью — атаки, защита и борьба за припасы.\n🗳 Днём — союзы, предательства и приговор арены.\n🏆 Последний выживший получает славу и коины!\n\nСобери от 4 до 20 игроков:\n1. Добавь бота в свою группу кнопкой ниже.\n2. Отправь /start в группе.\n3. Участники вступают через /join.\n⏳ Через 90 секунд начнётся бой!\n\n🛍 /shop — снаряжение и украшения\n👤 /profile — твои победы и награды\n\n📋 Полный список команд — /help', [[{'text': '➕ Добавить в свою группу', 'url': f'https://t.me/{self.username}?startgroup=arena'}]])
             else:
                 self.api.send(chat, HELP)
