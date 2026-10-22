@@ -68,13 +68,8 @@ HELP = '''🔥 Выживает сильнейший
 /stars — купить коины за Stars
 /terms — условия покупки
 /paysupport — помощь по оплате
-/kill @username — тайный приговор сопернику за 2000 коинов
-/use код — использовать аптечку, стимулятор или антидот
 /shop — магазин
-/buy код — купить предмет
 /inventory — ваши покупки
-/equip код — надеть предмет
-/unequip — снять украшения
 /transfer сумма — перевод ответом на сообщение
 /transfer ID сумма — перевод по Telegram ID
 /balance — баланс коинов
@@ -278,7 +273,7 @@ class Bot:
         args = m.get('text', '').split()
         item = args[1].lower() if len(args) == 2 else ''
         if item not in SHOP or SHOP[item][0] != 'consumable':
-            self.api.send(chat, 'Используйте /use medkit, /use stim, /use antidote или /use exile. Описание: /shop')
+            self.api.send(chat, 'Выберите предмет кнопкой в /inventory.')
             return
         match = next(((c, g) for c, g in self.games.items() if uid in g['players'] and g['phase'] != 'lobby'), None)
         if not match:
@@ -294,7 +289,7 @@ class Bot:
             return
         stock = self.state.get('accounts', {}).get(uid, {}).get('consumables', {})
         if stock.get(item, 0) < 1:
-            self.api.send(chat, 'Нет этого предмета. Купить: /buy ' + item)
+            self.api.send(chat, 'Нет этого предмета. Откройте /shop. Предмет: ' + item)
             return
         if item == 'exile':
             if game.get('secret_exile_used'):
@@ -384,7 +379,7 @@ class Bot:
     def active_elsewhere(self, uid, chat):
         return any(c != chat and uid in g['players'] for c, g in self.games.items())
 
-    def message(self, m):
+    def message(self, m, *, button_action=False):
         if payments.delivery(self, m):
             return
         text = m.get('text', '')
@@ -400,6 +395,9 @@ class Bot:
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
         cmd = command[0]
+        if cmd in ('/use', '/kill', '/equip', '/unequip', '/buy') and not button_action:
+            self.api.send(chat, 'Теперь всё через кнопки: /shop — купить, /inventory — использовать предмет или сменить украшения.')
+            return
         if cmd == '/adminprofile':
             if self.state.get('coin_owner_id') != uid:
                 self.api.send(chat, '⛔ Команда доступна только владельцу бота.')
@@ -448,11 +446,14 @@ class Bot:
             stock = account.setdefault('consumables', {})
             if cmd == '/shop':
                 lines = [f"{label} — {price} 🪙 · код: {item}" + (f' · в рюкзаке: {stock.get(item, 0)}' if kind == 'consumable' else ' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
-                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nТитулы и значки надеваются сразу после покупки. Расходники применяются сразу, если это возможно; иначе сохраняются в рюкзаке: /use код. Только ночью, максимум один расходник за игру (включая владельца). Тайный приговор: дополнительно один на весь матч.", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
+                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nТитулы и значки надеваются сразу после покупки. Расходники применяются сразу, если это возможно; иначе сохраняются в рюкзаке. Используйте кнопки в /inventory. Только ночью, максимум один расходник за игру (включая владельца). Тайный приговор: дополнительно один на весь матч.", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
             elif cmd == '/inventory':
-                lines = [f"{SHOP[item][1]} · /equip {item}" for item in owned if item in SHOP]
-                lines += [f'{SHOP[item][1]} ×{count} · /use {item}' for item, count in stock.items() if item in SHOP and count > 0]
-                self.api.send(chat, '🎒 Ваши покупки\n' + ('\n'.join(lines) or 'Пока пусто. Откройте /shop') + '\nНадето: ' + (cosmetics(account) or 'ничего'))
+                lines = [f"{SHOP[item][1]}" for item in owned if item in SHOP]
+                lines += [f'{SHOP[item][1]} ×{count}' for item, count in stock.items() if item in SHOP and count > 0]
+                buttons = [[{'text': 'Надеть: ' + SHOP[item][1], 'callback_data': 'inv:equip:' + item}] for item in owned if item in SHOP]
+                buttons += [[{'text': 'Использовать: ' + SHOP[item][1], 'callback_data': 'inv:use:' + item}] for item, count in stock.items() if item in SHOP and count > 0]
+                buttons += [[{'text': 'Снять украшения', 'callback_data': 'inv:unequip:all'}]]
+                self.api.send(chat, '🎒 Ваши покупки\n' + ('\n'.join(lines) or 'Пока пусто. Откройте /shop') + '\nНадето: ' + (cosmetics(account) or 'ничего'), buttons)
             elif cmd == '/unequip':
                 account['equipped'] = {}
                 self.save()
@@ -470,7 +471,7 @@ class Bot:
                         self.api.send(chat, 'Эта покупка уже выполнена. /inventory — ваши предметы.')
                         return
                     if kind != 'consumable' and item in owned:
-                        self.api.send(chat, 'Этот предмет уже куплен. Надеть: /equip ' + item)
+                        self.api.send(chat, 'Предмет уже куплен. Выберите его в /inventory: ' + item)
                         return
                     if not unlimited and account['coins'] < price:
                         self.api.send(chat, f"Не хватает коинов: нужно {price}, у вас {account['coins']}.")
@@ -636,7 +637,7 @@ class Bot:
                 self.phase(chat, g, 'night')
 
     def configure_commands(self):
-        self.api.call('setMyCommands', scope={'type': 'all_private_chats'}, commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('kill','Тайный приговор: /kill @username'),('use','Использовать предмет: /use medkit'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
+        self.api.call('setMyCommands', scope={'type': 'all_private_chats'}, commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('shop','Магазин за коины'),('inventory','Ваши покупки'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
         commands = [{'command': c, 'description': d} for c, d in GROUP_COMMANDS]
         self.api.call('setMyCommands', scope={'type': 'all_group_chats'}, commands=commands)
         self.api.call('setMyCommands', scope={'type': 'default'}, commands=commands)
@@ -794,12 +795,12 @@ class SurvivalBot(Bot):
         def answer(text):
             self.api.call('answerCallbackQuery', callback_query_id=q['id'], text=text, show_alert=True)
         if len(parts) != 5 or source_chat.get('type') != 'private' or str(source_chat.get('id')) != uid:
-            answer('Используйте /use exile в личном чате бота.')
+            answer('Откройте /inventory в личном чате бота.')
             return True
         action, chat, nonce, actor, target = parts
         game = self.games.get(chat)
         if actor != uid or not game or game.get('nonce') != nonce or game['phase'] != 'night' or time.time() >= game['deadline']:
-            answer('Выбор устарел. Откройте /use exile ночью.')
+            answer('Выбор устарел. Откройте /inventory ночью.')
             return True
         player = game['players'].get(uid)
         victim = game['players'].get(target)
@@ -840,6 +841,21 @@ class SurvivalBot(Bot):
 
     def callback(self, q):
         self.remember_username(q.get('from', {}))
+        data = q.get('data', '')
+        if data.startswith('inv:'):
+            parts = data.split(':')
+            chat = q.get('message', {}).get('chat', {})
+            uid = str(q.get('from', {}).get('id', ''))
+            if chat.get('type') != 'private' or str(chat.get('id')) != uid or len(parts) != 3 or parts[1] not in ('use', 'equip', 'unequip') or (parts[1] != 'unequip' and parts[2] not in SHOP):
+                self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Откройте свой /inventory в ЛС.')
+                return
+            command = '/' + parts[1] + (' ' + parts[2] if parts[1] != 'unequip' else '')
+            self.message({'text': command, 'from': q['from'], 'chat': chat}, button_action=True)
+            self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Результат — в сообщении бота.')
+            return
+        if data.startswith('kill:'):
+            self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Старая кнопка. Выберите предмет в /shop или /inventory.')
+            return
         if self.exile_callback(q):
             return
         if payments.callback(self, q):
@@ -856,7 +872,7 @@ class SurvivalBot(Bot):
                 return
             # Each Telegram callback is one purchase; replay uses the same receipt.
             self.message({'text': '/buy ' + parts[2], 'from': q['from'],
-                          'chat': message['chat'], 'message_id': 'shop-' + q['id']})
+                          'chat': message['chat'], 'message_id': 'shop-' + q['id']}, button_action=True)
             self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Результат покупки — в сообщении бота.')
             return
         answer = 'Кнопка устарела или ход недоступен.'
