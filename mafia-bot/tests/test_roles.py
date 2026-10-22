@@ -68,10 +68,10 @@ class RoleTests(unittest.TestCase):
     def test_impostor(self):
         g=self.game('detective','impostor');g['votes']={'1':'loot'};_,notes=self.run_night(g)
         self.assertEqual(len(notes),1);self.assertNotIn('Самозванец',notes[0][1])
-    def test_agitator_weight_resets(self):
+    def test_courtesan_legacy_boost_cannot_double_vote(self):
         g=self.game('agitator','doctor','armor');g['players']['1']['boosted']=True
         g['votes']={'1':'2','2':'1'}
-        self.assertEqual(council(g),('2',100));self.assertFalse(g['players']['1']['boosted'])
+        self.assertEqual(council(g),(None,0));self.assertFalse(g['players']['1']['boosted'])
     def test_immune_once(self):
         g=self.game('immune','doctor');g['players']['1']['poison']=[3]
         self.run_night(g);self.assertEqual(g['players']['1']['hp'],100)
