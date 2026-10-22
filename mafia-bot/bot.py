@@ -383,6 +383,8 @@ class Bot:
         if payments.delivery(self, m):
             return
         text = m.get('text', '')
+        if text.strip().casefold() == 'владелец':
+            text = '/owner'
         if not text.startswith('/') or m.get('from', {}).get('is_bot'):
             return
         uid, chat = str(m['from']['id']), str(m['chat']['id'])
@@ -395,6 +397,29 @@ class Bot:
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
         cmd = command[0]
+        if cmd == '/owner':
+            if self.state.get('coin_owner_id') != uid or m['chat']['type'] != 'private':
+                return
+            self.api.send(chat, '👑 Панель владельца\n\n'
+                          '🔐 Только для владельца:\n'
+                          '/adminprofile — профили всех администраторов\n'
+                          '/adminprofile 5060019034 — профиль выбранного админа\n\n'
+                          '🎮 Управление в группе:\n'
+                          '/start — набор и автостарт через 90 секунд\n'
+                          '/newgame — открыть набор\n'
+                          '/begin — начать игру\n'
+                          '/stop — отменить игру\n'
+                          '/players — участники\n\n'
+                          '🪙 Коины и покупки:\n'
+                          '/transfer ID сумма — выдать коины игроку\n'
+                          '/transfer сумма — выдать коины ответом на сообщение в группе\n'
+                          '/balance — баланс\n'
+                          '/shop — магазин с кнопками\n'
+                          '/inventory — предметы и украшения\n'
+                          '/profile — свой игровой профиль\n\n'
+                          'Ваш доступ к коинам — безлимитный.\n'
+                          'Повторно открыть список: владелец')
+            return
         if cmd in ('/use', '/kill', '/equip', '/unequip', '/buy') and not button_action:
             self.api.send(chat, 'Теперь всё через кнопки: /shop — купить, /inventory — использовать предмет или сменить украшения.')
             return
