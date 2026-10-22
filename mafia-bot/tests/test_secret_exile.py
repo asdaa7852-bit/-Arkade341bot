@@ -16,7 +16,7 @@ class ExileTests(unittest.TestCase):
     def click(self,actor='1',target='2',nonce='abc',source=None):
         self.bot.callback({'id':'q','from':{'id':int(actor)},'message':{'chat':{'id':int(actor),'type':'private'}},'data':f'exile:-1:{nonce}:{source or actor}:{target}'})
     def test_private_selection_and_anonymous_public_death(self):
-        self.bot.message({'text':'/use exile','from':{'id':1},'chat':{'id':1,'type':'private'}})
+        self.bot.message({'text':'/use exile','from':{'id':1},'chat':{'id':1,'type':'private'}}, button_action=True)
         self.assertEqual(self.bot.api.messages[-1][0],'1');self.assertEqual(len(self.bot.api.messages[-1][2]),3)
         self.click();self.assertFalse(self.g['players']['2']['alive']);self.assertEqual(self.g['players']['2']['hp'],0)
         public=[text for chat,text,k in self.bot.api.messages if chat=='-1']
@@ -37,7 +37,7 @@ class ExileTests(unittest.TestCase):
     def test_purchase_price_and_replay(self):
         self.bot.state['accounts']['1']['consumables']['exile']=0
         m={'text':'/buy exile','message_id':1,'from':{'id':1},'chat':{'id':1,'type':'private'}}
-        self.bot.message(m);self.bot.message(m)
+        self.bot.message(m, button_action=True);self.bot.message(m, button_action=True)
         self.assertEqual(self.bot.state['accounts']['1']['coins'],500)
         self.assertEqual(self.bot.state['accounts']['1']['consumables']['exile'],1)
     def test_failed_save_rolls_back_elimination(self):
