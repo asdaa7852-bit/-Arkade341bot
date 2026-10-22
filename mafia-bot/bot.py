@@ -714,7 +714,7 @@ class SurvivalBot(Bot):
                 target, damage = council(g)
                 self.save()
                 if target:
-                    report.append(f"\n🚪 {ps[target]['name']} выбывает: {counts[target]} голосов.")
+                    report.append(f"\n⚔️ Арена вынесла приговор: {ps[target]['name']} повержен!\n🗳 Голосов против: {counts[target]}.")
                 elif any(key != '0' for key in counts):
                     report.append('\n⚖️ Равенство голосов у лидеров. Никто не выбывает.')
                 else:
