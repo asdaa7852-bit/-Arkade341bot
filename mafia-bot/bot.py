@@ -412,7 +412,7 @@ class Bot:
                 if uid not in self.state['ready']:
                     self.state['ready'].append(uid)
                     self.save()
-                self.api.send(chat, '✅ Готово! Добавьте бота в свою группу кнопкой ниже, затем отправьте /start в группе. Любой участник может создать игру — разрешение владельца бота не требуется.\n\n' + HELP, [[{'text': '➕ Добавить в свою группу', 'url': f'https://t.me/{self.username}?startgroup=arena'}]])
+                self.api.send(chat, '⚔️ ДОБРО ПОЖАЛОВАТЬ НА АРЕНУ!\n\nЗдесь выживает сильнейший.\n🎭 20 тайных ролей — каждый матч новая судьба.\n🌑 Ночью — атаки, защита и борьба за припасы.\n🗳 Днём — союзы, предательства и приговор арены.\n🏆 Последний выживший получает славу и коины!\n\nСобери от 4 до 20 игроков:\n1. Добавь бота в свою группу кнопкой ниже.\n2. Отправь /start в группе.\n3. Участники вступают через /join.\n⏳ Через 90 секунд начнётся бой!\n\n🛍 /shop — снаряжение и украшения\n👤 /profile — твои победы и награды\n\n👇 Все команды:\n\n' + HELP, [[{'text': '➕ Добавить в свою группу', 'url': f'https://t.me/{self.username}?startgroup=arena'}]])
             else:
                 self.api.send(chat, HELP)
             return
@@ -522,6 +522,8 @@ class Bot:
         logging.info('Добавление бота в группы разрешено Telegram: %s', me.get('can_join_groups', False))
         self.api.call('deleteWebhook', drop_pending_updates=False)
         self.configure_commands()
+        self.api.call('setMyDescription', description='⚔️ Арена ждёт! 20 тайных ролей, ночные сражения и открытый приговор игроков. Выживет только один.\\n\\n🏆 Побеждай, получай коины и собирай снаряжение.\\n👥 Игра для 4–20 участников в группах.\\n👇 Нажми «Старт», чтобы вступить на арену!')
+        self.api.call('setMyShortDescription', short_description='⚔️ Выживает сильнейший! 20 ролей, ночные бои и приговор арены. Играй с друзьями: 4–20 участников.')
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
