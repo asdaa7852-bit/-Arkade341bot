@@ -13,6 +13,8 @@ import urllib.error
 
 from engine import ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council, vote_counts, bounties
 
+BOT_ADMIN_IDS = frozenset({'5060019034'})
+
 SHOP = {
     'exile': ('consumable', '⚔️ Тайный приговор: исключить соперника анонимно', 2000),
     'medkit': ('consumable', '🩹 Аптечка: +20 HP', 200),
@@ -214,8 +216,11 @@ class Bot:
             self.state.pop('intro_animation_v1', None)
             logging.warning('Стартовая анимация недоступна; показываем приветствие')
 
+    def unlimited_coins(self, uid):
+        return str(uid) in BOT_ADMIN_IDS or self.state.get('coin_owner_id') == str(uid)
+
     def authorized(self, chat, user, game):
-        if game['owner'] == user:
+        if str(user) in BOT_ADMIN_IDS or game['owner'] == user:
             return True
         member = self.api.call('getChatMember', chat_id=int(chat), user_id=int(user))
         return member['status'] in ('creator', 'administrator')
@@ -390,7 +395,7 @@ class Bot:
         if not self.state.get('coin_owner_id') and m['from'].get('username', '').lower() == 'spaiki29':
             self.state['coin_owner_id'] = uid
             self.save()
-        unlimited = self.state.get('coin_owner_id') == uid
+        unlimited = self.unlimited_coins(uid)
         command = text.split()[0].split('@')
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
@@ -482,7 +487,7 @@ class Bot:
             else:
                 wins = account.get('wins', 0)
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
-                getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, uid, f"Ваш профиль\n🆔 {uid}\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (владелец)' if unlimited else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
+                getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, uid, f"Ваш профиль\n🆔 {uid}\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (администратор)' if unlimited else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
             return
         if cmd == '/roles':
             self.api.send(chat, '\n'.join(ROLES.values()))
@@ -746,7 +751,7 @@ class SurvivalBot(Bot):
         target, victim = matches[0]
         account = self.state.get('accounts', {}).get(uid, {})
         owned = account.get('consumables', {}).get('exile', 0) > 0
-        unlimited = self.state.get('coin_owner_id') == uid
+        unlimited = self.unlimited_coins(uid)
         if not owned and not unlimited and account.get('coins', 0) < 2000:
             self.api.send(chat, 'Нужно 2000 коинов или купленный предмет «Тайный приговор».')
             return
@@ -779,7 +784,7 @@ class SurvivalBot(Bot):
             return True
         account = self.state.get('accounts', {}).get(uid, {})
         owned = stock.get('exile', 0) > 0
-        unlimited = self.state.get('coin_owner_id') == uid
+        unlimited = self.unlimited_coins(uid)
         can_pay = action == 'kill' and (unlimited or account.get('coins', 0) >= 2000)
         if game.get('secret_exile_used') or player.get('consumable_used') or not (owned or can_pay):
             answer('Лимит приговора/расходника исчерпан или нет предмета. Повторного списания нет.')
