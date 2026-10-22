@@ -713,6 +713,10 @@ class SurvivalBot(Bot):
                 rows.append([{'text': '⚔️ ' + p['name'], 'callback_data': f"v:{chat}:{game['nonce']}:{uid}"}])
         rows += [[{'text': '🛡 Защита', 'callback_data': f"v:{chat}:{game['nonce']}:guard"}], [{'text': '🎒 Искать припасы', 'callback_data': f"v:{chat}:{game['nonce']}:loot"}]]
         p = game['players'][actor]
+        if p['role']=='agitator':
+            for target,player in game['players'].items():
+                if player['alive'] and target!=actor:
+                    rows.append([{'text': '💋 В гости: ' + player['name'], 'callback_data': f"v:{chat}:{game['nonce']}:visit~{target}"}])
         perk = ROLE_PERKS.get(p['role'])
         if perk and not p.get('perk_used'):
             rows.append([{'text': '✨ ' + perk[0] + ' · 1 раз за игру', 'callback_data': f"perk:{chat}:{game['nonce']}:{actor}"}])
@@ -927,7 +931,7 @@ class SurvivalBot(Bot):
                     defaults(p)
                     if g['phase'] in ('night', 'vote') and uid in g.get('votes', {}):
                         answer = '🔒 Ваш выбор уже принят. Изменить его нельзя.'
-                    elif g['phase']=='night' and valid_action(g['players'],uid,target) and (not target.startswith('perk~') or q.get('message', {}).get('chat', {}).get('type') == 'private' and str(q['message']['chat'].get('id')) == uid):
+                    elif g['phase']=='night' and valid_action(g['players'],uid,target) and (not target.startswith(('perk~', 'visit~')) or q.get('message', {}).get('chat', {}).get('type') == 'private' and str(q['message']['chat'].get('id')) == uid):
                         g['votes'][uid]=target
                         self.save()
                         answer = '🔒 Выбор принят. Изменить его нельзя.'
