@@ -11,7 +11,7 @@ import time
 import urllib.request
 import urllib.error
 
-from engine import ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council
+from engine import ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council, vote_counts
 
 SHOP = {
     'medkit': ('consumable', '🩹 Аптечка: +20 HP', 200),
@@ -76,7 +76,7 @@ HELP = '''🔥 Выживает сильнейший
 /top — лучшие игроки
 /stop — отменить
 
-Каждый сначала нажимает /start в личном чате бота. Ночью выбирайте атаку, защиту или припасы. Днём обсуждение и голосование: выбранный теряет 35 HP. Роли тайные, команд нет. Побеждает последний живой. С третьей ночи арена наносит растущий урон всем. При одновременной гибели всех победителя нет. Без хода включается защита. Управление — у создателя и администраторов.'''
+Каждый сначала нажимает /start в личном чате бота. Ночью выбирайте атаку, защиту или припасы. Днём обсуждение и голосование: голосование проходит в ЛС, выбранный большинством выбывает. Роли тайные, команд нет. Побеждает последний живой. С третьей ночи арена наносит растущий урон всем. При одновременной гибели всех победителя нет. Без хода включается защита. Управление — у создателя и администраторов.'''
 
 
 def leader(votes):
@@ -579,9 +579,14 @@ class SurvivalBot(Bot):
                     self.safe_send(uid, '📢 До начала голосования можно один раз усилить свой голос. Это раскроет ваше участие в агитации.', [[{'text':'📢 Удвоить голос', 'callback_data':f"v:{chat}:{game['nonce']}:boost"}]])
             self.safe_send(chat, f'☀️ Обсуждение: {self.discuss} сек. Договаривайтесь и заключайте временные союзы.\n' + self.players(game))
         else:
-            rows = [[{'text': p['name'], 'callback_data': f"v:{chat}:{game['nonce']}:{u}"}] for u,p in game['players'].items() if p['alive']]
-            rows.append([{'text': 'Воздержаться', 'callback_data': f"v:{chat}:{game['nonce']}:0"}])
-            self.safe_send(chat, f'🗳 Совет арены: {voting} сек. Выберите, кто потеряет 35 здоровья. При ничьей наказания нет.', rows)
+            self.safe_send(chat, f'🗳 Голосование: {voting} сек. Выберите игрока в ЛС бота. Получивший больше всего голосов выбывает. При равенстве лидеров никто не выбывает.', [[{'text':'Открыть голосование в боте', 'url':f'https://t.me/{self.username}'}]])
+            for actor, player in game['players'].items():
+                if not player['alive']:
+                    continue
+                rows = [[{'text': p['name'], 'callback_data': f"v:{chat}:{game['nonce']}:{u}"}] for u, p in game['players'].items() if p['alive'] and u != actor]
+                rows.append([{'text': 'Воздержаться', 'callback_data': f"v:{chat}:{game['nonce']}:0"}])
+                self.safe_send(actor, f'🗳 Раунд {game["round"]}: кого исключить? У вас {voting} сек. Можно изменить выбор до конца голосования. Итоговые голоса будут открыты в группе.', rows)
+
 
     def callback(self, q):
         if payments.callback(self, q):
@@ -621,7 +626,7 @@ class SurvivalBot(Bot):
                         g['votes'][uid]=target
                         self.save()
                         answer = 'Выбор принят. Можно изменить до конца ночи.'
-                    elif g['phase']=='vote' and (target=='0' or target in g['players'] and g['players'][target]['alive'] and target!=uid):
+                    elif g['phase']=='vote' and q.get('message', {}).get('chat', {}).get('type') == 'private' and str(q.get('message', {}).get('chat', {}).get('id')) == uid and (target=='0' or target in g['players'] and g['players'][target]['alive'] and target!=uid):
                         g['votes'][uid]=target
                         self.save()
                         answer = 'Голос принят.'
@@ -693,13 +698,27 @@ class SurvivalBot(Bot):
                 if not self.finish(chat,g):
                     self.phase(chat,g,'discuss')
             else:
-                target,damage = council(g)
+                counts = vote_counts(g)
+                report = ['🗳 Итоги голосования', '', 'Кто за кого:']
+                for voter, player in alive.items():
+                    choice = votes.get(voter)
+                    valid = choice == '0' or choice in alive and choice != voter
+                    label = 'воздержался' if choice == '0' else alive[choice]['name'] if valid else 'не голосовал'
+                    weight = ' (2 голоса)' if valid and player.get('boosted') else ''
+                    report.append(f"{player['name']} → {label}{weight}")
+                report += ['', 'Количество голосов:']
+                for target_id, player in sorted(alive.items(), key=lambda item: (-counts.get(item[0], 0), item[0])):
+                    report.append(f"{player['name']}: {counts.get(target_id, 0)}")
+                report.append(f"Воздержались: {counts.get('0', 0)} голосов")
+                target, damage = council(g)
                 self.save()
                 if target:
-                    p = ps[target]
-                    self.safe_send(chat, f"⚖️ {p['name']}: −{damage} здоровья, осталось {p['hp']}." + (' Выбыл.' if not p['alive'] else ''))
+                    report.append(f"\n🚪 {ps[target]['name']} выбывает: {counts[target]} голосов.")
+                elif any(key != '0' for key in counts):
+                    report.append('\n⚖️ Равенство голосов у лидеров. Никто не выбывает.')
                 else:
-                    self.safe_send(chat,'⚖️ Совет никого не наказал.')
+                    report.append('\n⚖️ Нет голосов за исключение. Никто не выбывает.')
+                self.safe_send(chat, '\n'.join(report))
                 if not self.finish(chat,g):
                     g['round'] += 1
                     self.phase(chat,g,'night')
