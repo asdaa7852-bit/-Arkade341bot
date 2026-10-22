@@ -79,7 +79,7 @@ class Bot:
         self.state = json.loads(self.path.read_text()) if self.path.exists() else {'offset': 0, 'ready': [], 'games': {}}
         self.games = self.state['games']
         self.night = max(15, int(os.getenv('NIGHT_SECONDS', '60')))
-        self.discuss = max(15, int(os.getenv('DISCUSS_SECONDS', '90')))
+        self.discuss = max(15, int(os.getenv('DISCUSS_SECONDS', '60')))
         self.voting = max(15, int(os.getenv('VOTE_SECONDS', '45')))
 
     def save(self):
