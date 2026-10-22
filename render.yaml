@@ -1,0 +1,22 @@
+services:
+  - type: worker
+    name: Arkade341bot
+    runtime: python
+    region: frankfurt
+    plan: 0.5c-512mb
+    rootDir: mafia-bot
+    buildCommand: python -m compileall -q bot.py engine.py
+    startCommand: python -u bot.py
+    numInstances: 1
+    autoDeployTrigger: off
+    disk:
+      name: game-state
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: STATE_PATH
+        value: /var/data/state.json
+      - key: PYTHON_VERSION
+        value: 3.12.8
