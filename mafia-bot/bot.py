@@ -14,6 +14,9 @@ import urllib.error
 from engine import ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council
 
 SHOP = {
+    'medkit': ('consumable', '🩹 Аптечка: +20 HP', 200),
+    'stim': ('consumable', '💉 Стимулятор: +5 к атаке до конца игры', 250),
+    'antidote': ('consumable', '🧪 Антидот: снять текущие отравления', 150),
     'survivor': ('title', 'Выживший', 100),
     'raider': ('title', 'Покоритель арены', 300),
     'legend': ('title', 'Гроза арены', 700),
@@ -42,6 +45,7 @@ HELP = '''🔥 Выживает сильнейший
 /stars — купить коины за Stars
 /terms — условия покупки
 /paysupport — помощь по оплате
+/use код — использовать аптечку, стимулятор или антидот
 /shop — магазин
 /buy код — купить предмет
 /inventory — ваши покупки
@@ -162,6 +166,51 @@ class Bot:
         self.save()
 
 
+    def use_consumable(self, m, uid, chat):
+        args = m.get('text', '').split()
+        item = args[1].lower() if len(args) == 2 else ''
+        if item not in SHOP or SHOP[item][0] != 'consumable':
+            self.api.send(chat, 'Используйте /use medkit, /use stim или /use antidote. Описание: /shop')
+            return
+        match = next(((c, g) for c, g in self.games.items() if uid in g['players'] and g['phase'] != 'lobby'), None)
+        if not match:
+            self.api.send(chat, 'Предмет можно использовать только в начавшейся игре.')
+            return
+        game_chat, game = match
+        player = game['players'][uid]
+        if not player['alive'] or game['phase'] != 'night' or time.time() >= game['deadline']:
+            self.api.send(chat, 'Предмет доступен только живому игроку до окончания ночи.')
+            return
+        if player.get('consumable_used'):
+            self.api.send(chat, 'Вы уже использовали расходник в этой игре. Лимит: один за игру.')
+            return
+        stock = self.state.get('accounts', {}).get(uid, {}).get('consumables', {})
+        if stock.get(item, 0) < 1:
+            self.api.send(chat, 'Нет этого предмета. Купить: /buy ' + item)
+            return
+        if item == 'medkit':
+            if player['hp'] >= 100:
+                self.api.send(chat, 'Здоровье уже полное. Аптечка сохранена.')
+                return
+            player['hp'] = min(100, player['hp'] + 20)
+            effect = f"Здоровье: {player['hp']}/100."
+        elif item == 'stim':
+            if player.get('power', 0) >= 20:
+                self.api.send(chat, 'Усиление уже максимальное. Стимулятор сохранён.')
+                return
+            player['power'] = min(20, player.get('power', 0) + 5)
+            effect = f"Усиление атаки: +{player['power']} до конца игры (может быть украдено ролью Вор)."
+        else:
+            if not player.get('poison'):
+                self.api.send(chat, 'Вы не отравлены. Антидот сохранён.')
+                return
+            player['poison'] = []
+            effect = 'Текущие отравления сняты. Новое отравление этой ночью всё ещё возможно.'
+        stock[item] -= 1
+        player['consumable_used'] = True
+        self.save()
+        self.safe_send(chat, '✅ Предмет использован. ' + effect)
+
     def transfer(self, m, uid, chat, unlimited):
         args = m.get('text', '').split()
         reply_user = m.get('reply_to_message', {}).get('from', {})
@@ -236,6 +285,9 @@ class Bot:
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
         cmd = command[0]
+        if cmd == '/use':
+            self.use_consumable(m, uid, chat)
+            return
         if cmd == '/transfer':
             self.transfer(m, uid, chat, unlimited)
             return
@@ -245,11 +297,13 @@ class Bot:
             accounts = self.state.setdefault('accounts', {})
             account = accounts.setdefault(uid, {'coins': 0, 'wins': 0, 'games': 0})
             owned = account.setdefault('inventory', [])
+            stock = account.setdefault('consumables', {})
             if cmd == '/shop':
-                lines = [f"{label} — {price} 🪙 · код: {item}" + (' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
-                self.api.send(chat, '🛍 Магазин украшений профиля\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nКупить: /buy fire\nПополнить за Stars: /stars\nНадеть: /equip fire\nПокупки постоянные; титул и значок можно носить вместе.")
+                lines = [f"{label} — {price} 🪙 · код: {item}" + (f' · в рюкзаке: {stock.get(item, 0)}' if kind == 'consumable' else ' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
+                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nКупить: /buy fire\nПополнить за Stars: /stars\nНадеть: /equip fire\nТитулы и значки постоянные. Расходники одноразовые: /use код. Только ночью, максимум один расходник за игру (включая владельца).")
             elif cmd == '/inventory':
                 lines = [f"{SHOP[item][1]} · /equip {item}" for item in owned if item in SHOP]
+                lines += [f'{SHOP[item][1]} ×{count} · /use {item}' for item, count in stock.items() if item in SHOP and count > 0]
                 self.api.send(chat, '🎒 Ваши покупки\n' + ('\n'.join(lines) or 'Пока пусто. Откройте /shop') + '\nНадето: ' + (cosmetics(account) or 'ничего'))
             elif cmd == '/unequip':
                 account['equipped'] = {}
@@ -263,7 +317,11 @@ class Bot:
                 item = args[1].lower()
                 kind, label, price = SHOP[item]
                 if cmd == '/buy':
-                    if item in owned:
+                    receipt = f"{chat}:{m['message_id']}" if 'message_id' in m else None
+                    if receipt and receipt in self.state.get('shop_receipts', {}):
+                        self.api.send(chat, 'Эта покупка уже выполнена. /inventory — ваши предметы.')
+                        return
+                    if kind != 'consumable' and item in owned:
                         self.api.send(chat, 'Этот предмет уже куплен. Надеть: /equip ' + item)
                         return
                     if not unlimited and account['coins'] < price:
@@ -271,9 +329,16 @@ class Bot:
                         return
                     if not unlimited:
                         account['coins'] -= price
-                    owned.append(item)
+                    if kind == 'consumable':
+                        stock[item] = stock.get(item, 0) + 1
+                    else:
+                        owned.append(item)
+                    if receipt:
+                        self.state.setdefault('shop_receipts', {})[receipt] = item
                     self.save()
-                    self.api.send(chat, f"✅ Куплено: {label}. Осталось {account['coins']} 🪙.\nНадеть: /equip {item}")
+                    self.api.send(chat, f"✅ Куплено: {label}. Баланс: {'∞' if unlimited else account['coins']} 🪙.\n" + (f"Использовать: /use {item}" if kind == 'consumable' else f"Надеть: /equip {item}"))
+                elif kind == 'consumable':
+                    self.api.send(chat, 'Расходники используются командой /use ' + item)
                 elif item not in owned:
                     self.api.send(chat, 'Сначала купите предмет: /buy ' + item)
                 else:
@@ -415,7 +480,7 @@ class Bot:
     def run(self):
         self.username = self.api.call('getMe')['username']
         self.api.call('deleteWebhook', drop_pending_updates=False)
-        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
+        self.api.call('setMyCommands', commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('use','Использовать предмет: /use medkit'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
         logging.info('Бот запущен: @%s', self.username)
         while True:
             try:
