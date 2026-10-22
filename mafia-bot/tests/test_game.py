@@ -64,7 +64,8 @@ class SurvivalTests(unittest.TestCase):
     def test_council_damage(self):
         self.g.update(phase='vote',votes={'1':'2','3':'2'})
         self.resolve()
-        self.assertEqual(self.g['players']['2']['hp'],65)
+        self.assertEqual(self.g['players']['2']['hp'],0)
+        self.assertFalse(self.g['players']['2']['alive'])
     def test_restart(self):
         self.bot.save()
         loaded=SurvivalBot(self.api,str(self.bot.path))
