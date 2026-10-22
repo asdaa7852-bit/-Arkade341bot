@@ -12,7 +12,7 @@ class ShopButtonTests(unittest.TestCase):
         self.api=API();self.bot=SurvivalBot(self.api,str(Path(self.tmp.name)/'s.json'));self.bot.username='Arkade341bot'
         self.bot.state['accounts']={'1':{'coins':1000,'wins':0,'games':0},'2':{'coins':0,'wins':0,'games':0}}
     def click(self,uid,item,qid='q1'):
-        self.bot.callback({'id':qid,'data':'shop:buy:'+item,'from':{'id':uid},'message':{'message_id':7,'chat':{'id':-1,'type':'group'}}})
+        self.bot.callback({'id':qid,'data':'shop:buy:'+item,'from':{'id':uid},'message':{'message_id':7,'chat':{'id':uid,'type':'private'}}})
     def test_all_products_have_buttons(self):
         self.bot.message({'text':'/shop','from':{'id':1},'chat':{'id':1,'type':'private'}})
         rows=self.api.messages[-1][2]
