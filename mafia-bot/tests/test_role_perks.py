@@ -70,6 +70,22 @@ class PerkTests(unittest.TestCase):
         self.assertFalse(g['players']['2']['alive'])
         self.assertTrue(g['players']['3']['bounty'])
 
+    def test_courtesan_half_attack_and_no_stacking(self):
+        g = self.game('agitator')
+        g['players']['4'] = dict(name='4', role='mafia', alive=True, hp=100, power=0)
+        g['votes'].update({'4': 'perk~2', '2': '3', '3': 'loot'})
+        resolve_night(g)
+        self.assertEqual(g['players']['3']['hp'], 62)
+        self.assertTrue(g['players']['1']['perk_used'])
+        self.assertIn('Путана', ROLES['agitator'])
+        self.assertNotIn('Агитатор', ROLES['agitator'])
+
+    def test_courtesan_guard_reduces_normal_damage(self):
+        g = self.game('doctor'); g['players']['2']['role'] = 'agitator'
+        g['votes'] = {'1': '2', '2': 'guard'}
+        resolve_night(g)
+        self.assertEqual(g['players']['2']['hp'], 92)
+
     def test_private_target_menu_choice_lock_and_saved_once_limit(self):
         with tempfile.TemporaryDirectory() as d:
             api = API(); bot = SurvivalBot(api, d+'/s.json'); bot.username = 'Arkade341bot'
