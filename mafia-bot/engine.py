@@ -28,6 +28,32 @@ SPECIAL = {'sniper':('shot',1), 'thief':('steal',2), 'poisoner':('poison',1),
            'alchemist':('elixir',1), 'engineer':('shelter',2), 'ghost':('hide',1)}
 LABELS = {'shot':'🎯 Выстрел', 'steal':'🦹 Кража', 'poison':'☠️ Яд', 'elixir':'🧪 Эликсир', 'shelter':'🧱 Укрытие', 'hide':'👤 Скрыться'}
 TARGETED = {'shot','steal','poison','attack'}
+ROLE_PERKS = {
+ 'mafia': ('Боевой приказ', 'up'),
+ 'doctor': ('Переливание', 'heal'),
+ 'detective': ('Раскрыть слабость', 'down'),
+ 'armor': ('Полевая помощь', 'heal'),
+ 'sniper': ('Пробивающий выстрел', 'harm'),
+ 'assassin': ('Смертельная метка', 'harm'),
+ 'trapper': ('Сковывающая ловушка', 'down'),
+ 'thief': ('Саботаж оружия', 'down'),
+ 'poisoner': ('Токсичный всплеск', 'harm'),
+ 'alchemist': ('Живительная сыворотка', 'heal'),
+ 'berserker': ('Боевой раж', 'up'),
+ 'engineer': ('Усилить оружие', 'up'),
+ 'ghost': ('Леденящий ужас', 'down'),
+ 'vampire': ('Кровавый укус', 'harm'),
+ 'impostor': ('Дезориентация', 'down'),
+ 'agitator': ('Воодушевление', 'up'),
+ 'immune': ('Восстановление', 'heal'),
+ 'hunter': ('Охотничий азарт', 'up'),
+ 'mutant': ('Регенеративный импульс', 'heal'),
+ 'avenger': ('Карающий огонь', 'harm'),
+}
+PERK_EFFECTS = {'heal': '+33 HP (не выше 100)', 'harm': '33 прямого урона',
+                'up': '+33% к атаке цели этой ночью', 'down': '−33% к атаке цели этой ночью'}
+for role, (name, effect) in ROLE_PERKS.items():
+    ROLES[role] += ' · Раз за игру: ' + name + ' — ' + PERK_EFFECTS[effect] + ' другому игроку вместо хода'
 RNG = random.SystemRandom()
 
 
@@ -64,7 +90,7 @@ def setup(players, history=None):
     roles = choose_roles(players, history)
     for p, role in zip(players.values(), roles):
         p.update(role=role, hp=100, alive=True, power=0, used=0, poison=[], boosted=False,
-                 boost_used=False, immunity_used=False, abstain_used=False, bounty=False)
+                 boost_used=False, perk_used=False, immunity_used=False, abstain_used=False, bounty=False)
     for uid,p in players.items():
         if p['role']=='hunter':
             p['prey']=RNG.choice([u for u in players if u!=uid])
@@ -72,7 +98,7 @@ def setup(players, history=None):
 
 def defaults(p):
     if p['role']=='citizen': p['role']='armor'
-    for k,v in {'hp':100,'power':0,'used':0,'poison':[],'boosted':False,'boost_used':False,'immunity_used':False,'abstain_used':False,'bounty':False}.items():
+    for k,v in {'hp':100,'power':0,'used':0,'poison':[],'boosted':False,'boost_used':False,'perk_used':False,'immunity_used':False,'abstain_used':False,'bounty':False}.items():
         if k not in p: p[k]=v.copy() if isinstance(v,list) else v
 
 
@@ -86,6 +112,8 @@ def valid_action(players, uid, value):
     p=players.get(uid)
     if not p or not p['alive']: return False
     kind,target=parse_action(value)
+    if kind == 'perk':
+        return p['role'] in ROLE_PERKS and not p.get('perk_used') and target != uid and target in players and players[target]['alive']
     if kind in TARGETED and (target==uid or target not in players or not players[target]['alive']): return False
     if kind in ('guard','loot','attack'): return True
     ability = SPECIAL.get(p['role'])
@@ -134,6 +162,20 @@ def resolve_night(g, rng=None):
     start_hp={u:p['hp'] for u,p in alive.items()}
     start_power={u:p['power'] for u,p in alive.items()}
     notes=[];attacks=[];trap_damage=collections.Counter();poison_damage={};pending=[]
+    # All new perks resolve simultaneously. Multiple attack buffs/debuffs
+    # do not stack beyond one third; opposing effects cancel.
+    attack_perks=collections.Counter();perk_damage=collections.Counter()
+    for u,p in alive.items():
+        kind,target=actions[u]
+        if kind != 'perk':
+            continue
+        p['perk_used']=True
+        name,effect=ROLE_PERKS[p['role']]
+        if effect=='heal': ps[target]['hp']=min(100,ps[target]['hp']+33)
+        elif effect=='harm': perk_damage[target]+=33
+        else: attack_perks[target]+=1 if effect=='up' else -1
+        notes.append((u,'✨ ' + name + ': ' + ps[target]['name'] + ' — ' + PERK_EFFECTS[effect] + '.'))
+        notes.append((target,'✨ На вас действует приём: ' + PERK_EFFECTS[effect] + '.'))
     # Old poison ticks now; newly applied poison starts next night.
     for u,p in alive.items():
         poison_damage[u]=10*len(p['poison'])
@@ -143,7 +185,7 @@ def resolve_night(g, rng=None):
         p['poison']=[n-1 for n in p['poison'] if n>1]
     for u,p in alive.items():
         kind,target=actions[u]
-        if kind not in ('attack','guard','loot'): p['used']+=1
+        if kind not in ('attack','guard','loot','perk'): p['used']+=1
         if kind=='loot':
             p['hp']=min(100,p['hp']+(25 if p['role']=='doctor' else 15))
             p['power']=min(20,p['power']+5)
@@ -158,6 +200,8 @@ def resolve_night(g, rng=None):
         elif kind in ('attack','shot'):
             dmg=45 if kind=='shot' else 25+start_power[u]+(10 if p['role']=='mafia' else 0)+(15 if p['role']=='berserker' and start_hp[u]<=40 else 0)+(10 if p.get('bounty') else 0)
             if kind=='attack' and p['role']=='assassin' and actions[target][0]=='loot': dmg+=15
+            modifier=max(-1,min(1,attack_perks[u]))
+            dmg=max(0,(dmg*(100+33*modifier)+50)//100)
             attacks.append((u,target,dmg,kind=='shot'))
     # Theft cannot erase a simultaneous loot gain; attacks use pre-night power.
     for u,t,amount in pending:
@@ -193,7 +237,7 @@ def resolve_night(g, rng=None):
         before=p['hp'];hit=actual_damage[u]
         if p['role']=='avenger' and hit>=before and attackers[u]:
             revenge[rng.choice(attackers[u])]+=25
-        p['hp']=max(0,before-hit-trap_damage[u]-poison_damage[u]-hazard)
+        p['hp']=max(0,before-hit-trap_damage[u]-poison_damage[u]-hazard-perk_damage[u])
     for u,damage in revenge.items(): ps[u]['hp']=max(0,ps[u]['hp']-damage)
     for p in alive.values(): p['alive']=p['hp']>0
     bounties(ps)
