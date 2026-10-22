@@ -90,11 +90,11 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(p['hp'],40)
         self.bot.phase('-1',self.g,'night')
         self.assertEqual(p['hp'],45)
-    def test_boost_only_before_voting_once(self):
+    def test_removed_agitator_vote_button_is_rejected(self):
         p=self.g['players']['1'];p['role']='agitator'
         self.g['phase']='discuss'
         self.click('1','boost')
-        self.assertTrue(p['boost_used']);self.assertTrue(p['boosted'])
+        self.assertFalse(p['boost_used']);self.assertFalse(p['boosted'])
         p['boosted']=False
         self.click('1','boost')
         self.assertFalse(p['boosted'])
