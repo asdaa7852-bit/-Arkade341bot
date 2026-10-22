@@ -11,7 +11,7 @@ import time
 import urllib.request
 import urllib.error
 
-from engine import ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council, vote_counts, bounties
+from engine import ROLE_PERKS, PERK_EFFECTS, ROLES, SPECIAL, LABELS, TARGETED, setup, defaults, valid_action, resolve_night, council, vote_counts, bounties
 
 BOT_ADMIN_IDS = frozenset({'5060019034'})
 
@@ -553,9 +553,10 @@ class Bot:
                 p = match['players'][uid]
                 defaults(p)
                 ability = SPECIAL.get(p['role'])
+                extra_perk = '\nПриём: ' + ('использован' if p.get('perk_used') else 'доступен раз за игру')
                 extra = f"\nОсталось применений: {ability[1] - p['used']}" if ability else ''
                 if p['role']=='agitator': extra += '\nУсиление голоса: ' + ('использовано' if p['boost_used'] else 'доступно')
-                self.api.send(chat, ROLES[p['role']] + f"\n❤️ {p['hp']} | Усиление +{p['power']}" + extra)
+                self.api.send(chat, ROLES[p['role']] + f"\n❤️ {p['hp']} | Усиление +{p['power']}" + extra + extra_perk)
             return
         if m['chat']['type'] == 'private':
             if cmd == '/start':
@@ -713,6 +714,9 @@ class SurvivalBot(Bot):
                 rows.append([{'text': '⚔️ ' + p['name'], 'callback_data': f"v:{chat}:{game['nonce']}:{uid}"}])
         rows += [[{'text': '🛡 Защита', 'callback_data': f"v:{chat}:{game['nonce']}:guard"}], [{'text': '🎒 Искать припасы', 'callback_data': f"v:{chat}:{game['nonce']}:loot"}]]
         p = game['players'][actor]
+        perk = ROLE_PERKS.get(p['role'])
+        if perk and not p.get('perk_used'):
+            rows.append([{'text': '✨ ' + perk[0] + ' · 1 раз за игру', 'callback_data': f"perk:{chat}:{game['nonce']}:{actor}"}])
         ability = SPECIAL.get(p['role'])
         if ability and p.get('used',0) < ability[1]:
             kind,limit=ability
@@ -737,7 +741,7 @@ class SurvivalBot(Bot):
             self.safe_send(chat, f"🌑 Раунд {game['round']}. Ночь: {self.night} сек.\nВыбирайте действие в личном чате. Без хода — защита.")
             for uid, p in game['players'].items():
                 if p['alive']:
-                    self.safe_send(uid, f"❤️ {p['hp']} | Усиление атаки: +{p['power']}\nВыберите: атаковать, защищаться или искать припасы. Первый выбор окончательный — изменить его нельзя.", self.buttons(chat, game, uid))
+                    self.safe_send(uid, f"❤️ {p['hp']} | Усиление атаки: +{p['power']}\nВыберите: атаковать, защищаться или искать припасы. Первый выбор окончательный — изменить его нельзя. Приём ✨ заменяет ход и доступен раз за игру.", self.buttons(chat, game, uid))
                     if self.state.get('accounts', {}).get(uid, {}).get('consumables', {}).get('exile', 0) > 0 and not p.get('consumable_used') and not game.get('secret_exile_used'):
                         self.show_exile_targets(uid, uid)
         elif phase == 'discuss':
@@ -867,6 +871,20 @@ class SurvivalBot(Bot):
     def callback(self, q):
         self.remember_username(q.get('from', {}))
         data = q.get('data', '')
+        if data.startswith('perk:'):
+            parts = data.split(':')
+            uid = str(q.get('from', {}).get('id', ''))
+            source = q.get('message', {}).get('chat', {})
+            game = self.games.get(parts[1]) if len(parts) == 4 else None
+            player = game.get('players', {}).get(uid) if game else None
+            if not game or source.get('type') != 'private' or str(source.get('id')) != uid or parts[3] != uid or game.get('nonce') != parts[2] or game['phase'] != 'night' or time.time() >= game['deadline'] or not player or not player['alive'] or player.get('perk_used') or uid in game.get('votes', {}) or player['role'] not in ROLE_PERKS:
+                self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Приём недоступен или ночной выбор уже сделан.')
+                return
+            name,effect = ROLE_PERKS[player['role']]
+            rows = [[{'text': p['name'], 'callback_data': f"v:{parts[1]}:{parts[2]}:perk~{target}"}] for target,p in game['players'].items() if p['alive'] and target != uid]
+            self.api.send(uid, '✨ ' + name + ' — ' + PERK_EFFECTS[effect] + '.\nВыберите другого живого игрока. Приём заменяет ночной ход. После выбора цели изменить решение нельзя.', rows)
+            self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Выберите цель в сообщении бота.')
+            return
         if data.startswith('inv:'):
             parts = data.split(':')
             chat = q.get('message', {}).get('chat', {})
@@ -918,7 +936,7 @@ class SurvivalBot(Bot):
                         announcement = p['name'] + ': 📢 мой голос на ближайшем совете считается за два!'
                         self.save()
                         answer = 'Усиление активировано.'
-                    elif g['phase']=='night' and valid_action(g['players'],uid,target):
+                    elif g['phase']=='night' and valid_action(g['players'],uid,target) and (not target.startswith('perk~') or q.get('message', {}).get('chat', {}).get('type') == 'private' and str(q['message']['chat'].get('id')) == uid):
                         g['votes'][uid]=target
                         self.save()
                         answer = '🔒 Выбор принят. Изменить его нельзя.'
