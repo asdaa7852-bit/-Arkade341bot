@@ -169,6 +169,10 @@ class Bot:
         if not text.startswith('/') or m.get('from', {}).get('is_bot'):
             return
         uid, chat = str(m['from']['id']), str(m['chat']['id'])
+        if not self.state.get('coin_owner_id') and m['from'].get('username', '').lower() == 'spaiki29':
+            self.state['coin_owner_id'] = uid
+            self.save()
+        unlimited = self.state.get('coin_owner_id') == uid
         command = text.split()[0].split('@')
         if len(command) > 1 and command[1].lower() != self.username.lower():
             return
@@ -181,7 +185,7 @@ class Bot:
             owned = account.setdefault('inventory', [])
             if cmd == '/shop':
                 lines = [f"{label} — {price} 🪙 · код: {item}" + (' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
-                self.api.send(chat, '🛍 Магазин украшений профиля\n' + '\n'.join(lines) + f"\n\nБаланс: {account['coins']} 🪙\nКупить: /buy fire\nПополнить за Stars: /stars\nНадеть: /equip fire\nПокупки постоянные; титул и значок можно носить вместе.")
+                self.api.send(chat, '🛍 Магазин украшений профиля\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nКупить: /buy fire\nПополнить за Stars: /stars\nНадеть: /equip fire\nПокупки постоянные; титул и значок можно носить вместе.")
             elif cmd == '/inventory':
                 lines = [f"{SHOP[item][1]} · /equip {item}" for item in owned if item in SHOP]
                 self.api.send(chat, '🎒 Ваши покупки\n' + ('\n'.join(lines) or 'Пока пусто. Откройте /shop') + '\nНадето: ' + (cosmetics(account) or 'ничего'))
@@ -200,10 +204,11 @@ class Bot:
                     if item in owned:
                         self.api.send(chat, 'Этот предмет уже куплен. Надеть: /equip ' + item)
                         return
-                    if account['coins'] < price:
+                    if not unlimited and account['coins'] < price:
                         self.api.send(chat, f"Не хватает коинов: нужно {price}, у вас {account['coins']}.")
                         return
-                    account['coins'] -= price
+                    if not unlimited:
+                        account['coins'] -= price
                     owned.append(item)
                     self.save()
                     self.api.send(chat, f"✅ Куплено: {label}. Осталось {account['coins']} 🪙.\nНадеть: /equip {item}")
@@ -223,11 +228,11 @@ class Bot:
                 lines = [f"{i}. {a['name']} {cosmetics(a)} — 🏆 {a['wins']} · 🪙 {a['coins']}" for i, (u, a) in enumerate(ranked, 1)]
                 self.api.send(chat, '🏆 Топ игроков\n' + ('\n'.join(lines) or 'Побед пока нет. Станьте первым!'))
             elif cmd == '/balance':
-                self.api.send(chat, f"🪙 Ваш баланс: {account.get('coins', 0)} коинов.\nПобеда: +100. Это игровые очки без денежной стоимости.")
+                self.api.send(chat, f"🪙 Ваш баланс: {'∞' if unlimited else account.get('coins', 0)} коинов.\nПобеда: +100. Это игровые очки без денежной стоимости.")
             else:
                 wins = account.get('wins', 0)
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
-                self.api.send(chat, f"👤 Ваш профиль\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
+                self.api.send(chat, f"👤 Ваш профиль\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (владелец)' if unlimited else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
             return
         if cmd == '/roles':
             self.api.send(chat, '\n'.join(ROLES.values()))
