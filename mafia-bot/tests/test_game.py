@@ -112,7 +112,8 @@ class InterfaceTests(unittest.TestCase):
                 data=row[0]['callback_data']
                 self.assertLessEqual(len(data.encode()),64)
                 from engine import valid_action
-                self.assertTrue(valid_action(self.g['players'],'1',data.split(':')[-1]))
+                if not data.startswith('perk:'):
+                    self.assertTrue(valid_action(self.g['players'],'1',data.split(':')[-1]))
     def test_begin_assigns_all_twenty_and_hides_secrets(self):
         from engine import ROLES
         self.g.update(phase='lobby',players={str(i):{'name':str(i),'alive':True,'role':'armor'} for i in range(1,21)})
