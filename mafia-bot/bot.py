@@ -64,6 +64,7 @@ HELP = '''🔥 Выживает сильнейший
 /stars — купить коины за Stars
 /terms — условия покупки
 /paysupport — помощь по оплате
+/kill @username — тайный приговор сопернику за 2000 коинов
 /use код — использовать аптечку, стимулятор или антидот
 /shop — магазин
 /buy код — купить предмет
@@ -354,6 +355,7 @@ class Bot:
         if not text.startswith('/') or m.get('from', {}).get('is_bot'):
             return
         uid, chat = str(m['from']['id']), str(m['chat']['id'])
+        self.remember_username(m['from'])
         if not self.state.get('coin_owner_id') and m['from'].get('username', '').lower() == 'spaiki29':
             self.state['coin_owner_id'] = uid
             self.save()
@@ -363,9 +365,12 @@ class Bot:
             return
         cmd = command[0]
         if m['chat']['type'] in ('group', 'supergroup') and cmd not in { '/' + c for c, _ in GROUP_COMMANDS }:
-            if cmd in {'/shop', '/buy', '/inventory', '/equip', '/unequip', '/transfer', '/balance', '/profile', '/top', '/stars', '/terms', '/paysupport', '/support', '/myrole', '/use'}:
+            if cmd in {'/shop', '/buy', '/inventory', '/equip', '/unequip', '/transfer', '/balance', '/profile', '/top', '/stars', '/terms', '/paysupport', '/support', '/myrole', '/use', '/kill'}:
                 self.api.send(chat, 'Эта команда доступна в личном чате бота.',
                               [[{'text': 'Открыть бота', 'url': f'https://t.me/{self.username}?start=menu'}]])
+            return
+        if cmd == '/kill':
+            self.kill_command(m, uid, chat)
             return
         if cmd == '/use':
             self.use_consumable(m, uid, chat)
@@ -565,7 +570,7 @@ class Bot:
                 self.phase(chat, g, 'night')
 
     def configure_commands(self):
-        self.api.call('setMyCommands', scope={'type': 'all_private_chats'}, commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('use','Использовать предмет: /use medkit'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
+        self.api.call('setMyCommands', scope={'type': 'all_private_chats'}, commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('kill','Тайный приговор: /kill @username'),('use','Использовать предмет: /use medkit'),('shop','Магазин за коины'),('buy','Купить: /buy fire'),('inventory','Ваши покупки'),('equip','Надеть: /equip fire'),('unequip','Снять украшения'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
         commands = [{'command': c, 'description': d} for c, d in GROUP_COMMANDS]
         self.api.call('setMyCommands', scope={'type': 'all_group_chats'}, commands=commands)
         self.api.call('setMyCommands', scope={'type': 'default'}, commands=commands)
@@ -658,9 +663,62 @@ class SurvivalBot(Bot):
 
 
 
+
+    def remember_username(self, user):
+        if user.get('is_bot') or not user.get('id'):
+            return
+        uid = str(user['id'])
+        name = user.get('username', '').lower()
+        directory = self.state.setdefault('telegram_usernames', {})
+        if not name and uid not in directory:
+            return
+        changed = directory.get(uid) != name
+        if name:
+            for other in list(directory):
+                if other != uid and directory[other] == name:
+                    directory[other] = ''
+                    changed = True
+        directory[uid] = name
+        if changed:
+            self.save()
+
+    def kill_command(self, m, uid, chat):
+        args = m.get('text', '').split()
+        if len(args) != 2 or not args[1].startswith('@') or not args[1][1:].isascii() or not all(c.isalnum() or c == '_' for c in args[1][1:]) or len(args[1]) < 6:
+            self.api.send(chat, 'Используйте /kill @username в ЛС бота. Нужен username живого соперника.')
+            return
+        match = next(((c, g) for c, g in self.games.items() if uid in g['players'] and g['phase'] != 'lobby'), None)
+        if not match:
+            self.api.send(chat, 'Вы не участвуете в начавшейся игре.')
+            return
+        group, game = match
+        player = game['players'][uid]
+        if not player['alive'] or game['phase'] != 'night' or time.time() >= game['deadline']:
+            self.api.send(chat, 'Тайный приговор доступен живому игроку только ночью.')
+            return
+        if player.get('consumable_used') or game.get('secret_exile_used'):
+            self.api.send(chat, 'Лимит приговора или вашего расходника в этом матче исчерпан.')
+            return
+        name = args[1][1:].lower()
+        directory = self.state.get('telegram_usernames', {})
+        matches = [(u, p) for u, p in game['players'].items() if p['alive'] and u != uid and directory.get(u) == name]
+        if len(matches) != 1:
+            self.api.send(chat, 'Не найден живой соперник с этим username. Пусть игрок отправит /start в ЛС бота, затем попробуйте снова. Либо выберите по имени через /use exile.')
+            return
+        target, victim = matches[0]
+        account = self.state.get('accounts', {}).get(uid, {})
+        owned = account.get('consumables', {}).get('exile', 0) > 0
+        unlimited = self.state.get('coin_owner_id') == uid
+        if not owned and not unlimited and account.get('coins', 0) < 2000:
+            self.api.send(chat, 'Нужно 2000 коинов или купленный предмет «Тайный приговор».')
+            return
+        price = 'Используется купленный предмет.' if owned else 'Стоимость: 2000 коинов.' if not unlimited else 'Стоимость для владельца: 0 коинов.'
+        self.api.send(chat, f"⚔️ Тайный приговор: {victim['name']} ({args[1]}, ID {target}).\n{price}\nИгрок немедленно покинет матч. Имя заказчика в группе скрыто. Подтвердить?",
+                      [[{'text': '⚔️ Подтвердить тайный приговор', 'callback_data': f"kill:{group}:{game['nonce']}:{uid}:{target}"}]])
+
     def exile_callback(self, q):
         data = q.get('data', '')
-        if not data.startswith('exile:'):
+        if not data.startswith(('exile:', 'kill:')):
             return False
         parts = data.split(':')
         uid = str(q.get('from', {}).get('id', ''))
@@ -670,7 +728,7 @@ class SurvivalBot(Bot):
         if len(parts) != 5 or source_chat.get('type') != 'private' or str(source_chat.get('id')) != uid:
             answer('Используйте /use exile в личном чате бота.')
             return True
-        _, chat, nonce, actor, target = parts
+        action, chat, nonce, actor, target = parts
         game = self.games.get(chat)
         if actor != uid or not game or game.get('nonce') != nonce or game['phase'] != 'night' or time.time() >= game['deadline']:
             answer('Выбор устарел. Откройте /use exile ночью.')
@@ -681,13 +739,20 @@ class SurvivalBot(Bot):
         if not player or not player['alive'] or not victim or not victim['alive'] or target == uid:
             answer('Нужен живой соперник. Предмет не потрачен.')
             return True
-        if game.get('secret_exile_used') or player.get('consumable_used') or stock.get('exile', 0) < 1:
+        account = self.state.get('accounts', {}).get(uid, {})
+        owned = stock.get('exile', 0) > 0
+        unlimited = self.state.get('coin_owner_id') == uid
+        can_pay = action == 'kill' and (unlimited or account.get('coins', 0) >= 2000)
+        if game.get('secret_exile_used') or player.get('consumable_used') or not (owned or can_pay):
             answer('Лимит приговора/расходника исчерпан или нет предмета. Повторного списания нет.')
             return True
         import copy
         previous = copy.deepcopy(self.state)
         try:
-            stock['exile'] -= 1
+            if owned:
+                stock['exile'] -= 1
+            elif not unlimited:
+                account['coins'] -= 2000
             player['consumable_used'] = True
             game['secret_exile_used'] = True
             victim.update(hp=0, alive=False)
@@ -706,6 +771,7 @@ class SurvivalBot(Bot):
         return True
 
     def callback(self, q):
+        self.remember_username(q.get('from', {}))
         if self.exile_callback(q):
             return
         if payments.callback(self, q):
