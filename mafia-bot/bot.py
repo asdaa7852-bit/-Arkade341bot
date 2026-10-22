@@ -555,7 +555,6 @@ class Bot:
                 ability = SPECIAL.get(p['role'])
                 extra_perk = '\nПриём: ' + ('использован' if p.get('perk_used') else 'доступен раз за игру')
                 extra = f"\nОсталось применений: {ability[1] - p['used']}" if ability else ''
-                if p['role']=='agitator': extra += '\nУсиление голоса: ' + ('использовано' if p['boost_used'] else 'доступно')
                 self.api.send(chat, ROLES[p['role']] + f"\n❤️ {p['hp']} | Усиление +{p['power']}" + extra + extra_perk)
             return
         if m['chat']['type'] == 'private':
@@ -745,9 +744,6 @@ class SurvivalBot(Bot):
                     if self.state.get('accounts', {}).get(uid, {}).get('consumables', {}).get('exile', 0) > 0 and not p.get('consumable_used') and not game.get('secret_exile_used'):
                         self.show_exile_targets(uid, uid)
         elif phase == 'discuss':
-            for uid,p in game['players'].items():
-                if p['alive'] and p['role']=='agitator' and not p['boost_used']:
-                    self.safe_send(uid, '📢 До начала голосования можно один раз усилить свой голос. Это раскроет ваше участие в агитации.', [[{'text':'📢 Удвоить голос', 'callback_data':f"v:{chat}:{game['nonce']}:boost"}]])
             self.safe_send(chat, f'☀️ Обсуждение: {self.discuss} сек. Договаривайтесь и заключайте временные союзы.\n' + self.players(game))
         else:
             self.safe_send(chat, f'🗳 Голосование: {voting} сек. Выберите игрока в ЛС бота. Получивший больше всего голосов выбывает. При равенстве лидеров никто не выбывает.', [[{'text':'Открыть голосование в боте', 'url':f'https://t.me/{self.username}'}]])
@@ -931,11 +927,6 @@ class SurvivalBot(Bot):
                     defaults(p)
                     if g['phase'] in ('night', 'vote') and uid in g.get('votes', {}):
                         answer = '🔒 Ваш выбор уже принят. Изменить его нельзя.'
-                    elif g['phase']=='discuss' and target=='boost' and p['role']=='agitator' and not p['boost_used']:
-                        p.update(boost_used=True,boosted=True)
-                        announcement = p['name'] + ': 📢 мой голос на ближайшем совете считается за два!'
-                        self.save()
-                        answer = 'Усиление активировано.'
                     elif g['phase']=='night' and valid_action(g['players'],uid,target) and (not target.startswith('perk~') or q.get('message', {}).get('chat', {}).get('type') == 'private' and str(q['message']['chat'].get('id')) == uid):
                         g['votes'][uid]=target
                         self.save()
@@ -1018,7 +1009,7 @@ class SurvivalBot(Bot):
                     choice = votes.get(voter)
                     valid = choice == '0' and not player.get('abstain_used') or choice in alive and choice != voter
                     label = 'воздержался' if choice == '0' and valid else alive[choice]['name'] if valid else 'не голосовал'
-                    weight = ' (2 голоса)' if valid and player.get('boosted') else ''
+                    weight = ''
                     report.append(f"{player['name']} → {label}{weight}")
                 report += ['', 'Количество голосов:']
                 for target_id, player in sorted(alive.items(), key=lambda item: (-counts.get(item[0], 0), item[0])):
