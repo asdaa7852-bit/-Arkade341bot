@@ -737,7 +737,7 @@ class SurvivalBot(Bot):
             self.safe_send(chat, f"🌑 Раунд {game['round']}. Ночь: {self.night} сек.\nВыбирайте действие в личном чате. Без хода — защита.")
             for uid, p in game['players'].items():
                 if p['alive']:
-                    self.safe_send(uid, f"❤️ {p['hp']} | Усиление атаки: +{p['power']}\nВыберите: атаковать, защищаться или искать припасы. Последний выбор учитывается.", self.buttons(chat, game, uid))
+                    self.safe_send(uid, f"❤️ {p['hp']} | Усиление атаки: +{p['power']}\nВыберите: атаковать, защищаться или искать припасы. Первый выбор окончательный — изменить его нельзя.", self.buttons(chat, game, uid))
                     if self.state.get('accounts', {}).get(uid, {}).get('consumables', {}).get('exile', 0) > 0 and not p.get('consumable_used') and not game.get('secret_exile_used'):
                         self.show_exile_targets(uid, uid)
         elif phase == 'discuss':
@@ -753,7 +753,7 @@ class SurvivalBot(Bot):
                 rows = [[{'text': p['name'], 'callback_data': f"v:{chat}:{game['nonce']}:{u}"}] for u, p in game['players'].items() if p['alive'] and u != actor]
                 if not player.get('abstain_used'):
                     rows.append([{'text': 'Воздержаться (1 раз за игру)', 'callback_data': f"v:{chat}:{game['nonce']}:0"}])
-                self.safe_send(actor, f'🗳 Раунд {game["round"]}: кого исключить? У вас {voting} сек. Можно изменить выбор до конца голосования. Итоговые голоса будут открыты в группе. Воздержаться можно один раз за игру.', rows)
+                self.safe_send(actor, f'🗳 Раунд {game["round"]}: кого исключить? У вас {voting} сек. Первый голос окончательный — изменить его нельзя. Итоговые голоса будут открыты в группе. Воздержаться можно один раз за игру.', rows)
 
 
 
@@ -911,7 +911,9 @@ class SurvivalBot(Bot):
                 p = g['players'].get(uid)
                 if p and p['alive']:
                     defaults(p)
-                    if g['phase']=='discuss' and target=='boost' and p['role']=='agitator' and not p['boost_used']:
+                    if g['phase'] in ('night', 'vote') and uid in g.get('votes', {}):
+                        answer = '🔒 Ваш выбор уже принят. Изменить его нельзя.'
+                    elif g['phase']=='discuss' and target=='boost' and p['role']=='agitator' and not p['boost_used']:
                         p.update(boost_used=True,boosted=True)
                         announcement = p['name'] + ': 📢 мой голос на ближайшем совете считается за два!'
                         self.save()
@@ -919,11 +921,11 @@ class SurvivalBot(Bot):
                     elif g['phase']=='night' and valid_action(g['players'],uid,target):
                         g['votes'][uid]=target
                         self.save()
-                        answer = 'Выбор принят. Можно изменить до конца ночи.'
+                        answer = '🔒 Выбор принят. Изменить его нельзя.'
                     elif g['phase']=='vote' and q.get('message', {}).get('chat', {}).get('type') == 'private' and str(q.get('message', {}).get('chat', {}).get('id')) == uid and (target=='0' and not p.get('abstain_used') or target in g['players'] and g['players'][target]['alive'] and target!=uid):
                         g['votes'][uid]=target
                         self.save()
-                        answer = 'Голос принят.'
+                        answer = '🔒 Голос принят. Изменить его нельзя.'
         self.api.call('answerCallbackQuery', callback_query_id=q['id'], text=answer)
         if announcement:
             self.safe_send(chat,announcement)
