@@ -19,7 +19,7 @@ ROLES = {
  'vampire': '🩸 Вампир — лечится на треть реально нанесённого атакой урона',
  'impostor': '🎭 Самозванец — разведка показывает другую роль',
  'agitator': '📢 Агитатор — раз за игру удваивает свой голос до начала голосования',
- 'immune': '⚖️ Неприкосновенный — первое наказание совета наносит 10 вместо 35',
+ 'immune': '⚖️ Неприкосновенный — один раз блокирует ночной урон от текущего яда',
  'hunter': '🐺 Охотник — гибель тайной цели даёт постоянные +10 к атаке',
  'mutant': '🧬 Мутант — в начале ночи восстанавливает 5 HP',
  'avenger': '🔥 Мститель — погибнув от атак, наносит одному нападавшему 25 урона',
@@ -63,22 +63,30 @@ def valid_action(players, uid, value):
     return bool(ability and kind==ability[0] and p.get('used',0)<ability[1])
 
 
+def vote_counts(g):
+    ps = g['players']
+    counts = collections.Counter()
+    for uid, target in g['votes'].items():
+        p = ps.get(uid)
+        if p and p['alive'] and (target == '0' or target in ps and ps[target]['alive'] and target != uid):
+            counts[target] += 2 if p.get('boosted') else 1
+    return counts
+
+
 def council(g):
-    ps=g['players']
-    counts=collections.Counter()
-    for uid,target in g['votes'].items():
-        p=ps.get(uid)
-        if p and p['alive'] and (target=='0' or target in ps and ps[target]['alive'] and target!=uid):
-            counts[target]+=2 if p.get('boosted') else 1
-    for p in ps.values(): p['boosted']=False
-    ranks=counts.most_common()
-    if not ranks or len(ranks)>1 and ranks[0][1]==ranks[1][1] or ranks[0][0]=='0': return None,0
-    target=ranks[0][0];p=ps[target]
-    damage=10 if p['role']=='immune' and not p.get('immunity_used') else 35
-    if p['role']=='immune': p['immunity_used']=True
-    p['hp']=max(0,p['hp']-damage);p['alive']=p['hp']>0
+    ps = g['players']
+    counts = vote_counts(g)
+    counts.pop('0', None)  # Abstentions are shown but are not a candidate.
+    for p in ps.values():
+        p['boosted'] = False
+    ranks = counts.most_common()
+    if not ranks or len(ranks) > 1 and ranks[0][1] == ranks[1][1]:
+        return None, 0
+    target = ranks[0][0]
+    damage = ps[target]['hp']
+    ps[target].update(hp=0, alive=False)
     bounties(ps)
-    return target,damage
+    return target, damage
 
 
 def bounties(ps):
@@ -98,6 +106,9 @@ def resolve_night(g, rng=None):
     # Old poison ticks now; newly applied poison starts next night.
     for u,p in alive.items():
         poison_damage[u]=10*len(p['poison'])
+        if poison_damage[u] and p['role']=='immune' and not p.get('immunity_used'):
+            poison_damage[u]=0
+            p['immunity_used']=True
         p['poison']=[n-1 for n in p['poison'] if n>1]
     for u,p in alive.items():
         kind,target=actions[u]
