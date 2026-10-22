@@ -24,10 +24,12 @@ class AbstainTests(unittest.TestCase):
         self.assertFalse(any(b['callback_data'].endswith(':0') for row in ballot for b in row))
         self.click('0');self.assertFalse(self.g['votes'])
         self.g['votes']={'1':'0'};self.assertFalse(vote_counts(self.g))
-    def test_changed_vote_and_timeout_do_not_consume(self):
-        self.click('0');self.click('2');council(self.g)
-        self.assertFalse(self.g['players']['1'].get('abstain_used'))
-        self.g['votes']={};council(self.g);self.assertFalse(self.g['players']['1'].get('abstain_used'))
+    def test_first_abstention_is_final_and_timeout_does_not_consume(self):
+        self.click('0');self.click('2')
+        self.assertEqual(self.g['votes']['1'],'0')
+        council(self.g)
+        self.assertTrue(self.g['players']['1'].get('abstain_used'))
+        self.g['votes']={};council(self.g);self.assertFalse(self.g['players']['2'].get('abstain_used'))
     def test_new_game_resets_limit(self):
         for p in self.g['players'].values():p['abstain_used']=True
         setup(self.g['players']);self.assertTrue(all(not p['abstain_used'] for p in self.g['players'].values()))
