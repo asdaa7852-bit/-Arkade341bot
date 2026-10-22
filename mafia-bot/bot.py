@@ -131,6 +131,12 @@ class Bot:
         self.api, self.path = api, Path(path)
         self.state = json.loads(self.path.read_text()) if self.path.exists() else {'offset': 0, 'ready': [], 'games': {}}
         self.games = self.state['games']
+        history = self.state.setdefault('role_history', {})
+        for game in self.games.values():
+            if game.get('phase') != 'lobby':
+                for uid, player in game.get('players', {}).items():
+                    if player.get('role') in ROLES:
+                        history.setdefault(uid, [player['role']])
         self.night = max(15, int(os.getenv('NIGHT_SECONDS', '60')))
         self.discuss = 60
         self.voting = 45
@@ -484,7 +490,8 @@ class Bot:
                 if failed:
                     self.api.send(chat, 'Запуск отменён: откройте личный чат бота: ' + ', '.join(failed))
                     return
-                setup(g['players'])
+                history = self.state.setdefault('role_history', {})
+                setup(g['players'], history)
                 failed = False
                 for u, p in g['players'].items():
                     info = ROLES[p['role']]
@@ -496,6 +503,9 @@ class Bot:
                     self.save()
                     self.api.send(chat, 'Раздать все роли не удалось. Игра отменена. Создайте новую: /newgame')
                     return
+                for player_id, player in g['players'].items():
+                    history[player_id] = (history.get(player_id, []) + [player['role']])[-3:]
+                self.save()
                 self.update_lobby(chat, g, '✅ Набор завершён. Игра началась!')
                 g['round'] = 1
                 self.phase(chat, g, 'night')
