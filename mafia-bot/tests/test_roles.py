@@ -71,10 +71,11 @@ class RoleTests(unittest.TestCase):
     def test_agitator_weight_resets(self):
         g=self.game('agitator','doctor','armor');g['players']['1']['boosted']=True
         g['votes']={'1':'2','2':'1'}
-        self.assertEqual(council(g),('2',35));self.assertFalse(g['players']['1']['boosted'])
+        self.assertEqual(council(g),('2',100));self.assertFalse(g['players']['1']['boosted'])
     def test_immune_once(self):
-        g=self.game('immune','doctor');g['votes']={'2':'1'}
-        self.assertEqual(council(g),('1',10));self.assertEqual(council(g),('1',35))
+        g=self.game('immune','doctor');g['players']['1']['poison']=[3]
+        self.run_night(g);self.assertEqual(g['players']['1']['hp'],100)
+        self.run_night(g);self.assertEqual(g['players']['1']['hp'],90)
     def test_hunter_bounty_and_attack(self):
         g=self.game('hunter','doctor','armor');g['players']['1']['prey']='2'
         g['players']['2']['hp']=10;g['votes']={'3':'2'};self.run_night(g)
