@@ -80,9 +80,8 @@ HELP = '''🔥 Выживает сильнейший
 /inventory — ваши покупки
 /transfer сумма — перевод ответом на сообщение
 /transfer ID сумма — перевод по Telegram ID
-/exchange — обмен Арена-коинов 1:100
 /balance — баланс коинов
-/profile — победы и награды
+/profile — победы, награды и обмен Арена-коинов
 /top — лучшие игроки
 /stop — отменить
 
@@ -153,16 +152,16 @@ class API:
         except Exception:
             raise RuntimeError('Не удалось отправить анимацию') from None
 
-    def profile(self, chat, uid, text):
+    def profile(self, chat, uid, text, keyboard=None):
         try:
             photos = self.call('getUserProfilePhotos', user_id=int(uid), limit=1).get('photos', [])
             if photos and photos[0]:
                 photo = max(photos[0], key=lambda p: p.get('width', 0) * p.get('height', 0))
                 if len(text) <= 1024:
-                    return self.call('sendPhoto', chat_id=chat, photo=photo['file_id'], caption=text)
+                    return self.call('sendPhoto', chat_id=chat, photo=photo['file_id'], caption=text, **({'reply_markup': {'inline_keyboard': keyboard}} if keyboard else {}))
         except Exception:
             logging.warning('Аватарка недоступна; показываем профиль текстом')
-        return self.send(chat, text)
+        return self.send(chat, text, keyboard)
 
     def send(self, chat, text, keyboard=None):
         params = {'chat_id': chat, 'text': text}
@@ -224,8 +223,24 @@ class Bot:
             self.state.pop('intro_animation_v1', None)
             logging.warning('Стартовая анимация недоступна; показываем приветствие')
 
-    def show_profile(self, chat, uid, text):
-        getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, uid, text)
+    def exchange_buttons(self, uid):
+        count = self.state.get('accounts', {}).get(str(uid), {}).get('arena_coins', 0)
+        return [[{'text': '🏅 Обменять 1 → 100 🪙', 'callback_data': 'exchange:one:' + str(uid)}],
+                [{'text': f'🏅 Обменять все ({count}) → {count*100} 🪙', 'callback_data': 'exchange:all:' + str(uid)}]]
+
+    def show_profile(self, chat, uid, text, exchange=False):
+        keyboard = self.exchange_buttons(uid) if exchange else None
+        method = getattr(self.api, 'profile', None)
+        if method:
+            if keyboard:
+                method(chat, uid, text, keyboard=keyboard)
+            else:
+                method(chat, uid, text)
+        else:
+            self.api.send(chat, text, keyboard)
+
+    def show_own_profile(self, chat, uid, text):
+        self.show_profile(chat, uid, text, exchange=True)
 
     def exchange_menu(self, uid, chat):
         account = self.state.get('accounts', {}).get(uid, {})
@@ -244,8 +259,12 @@ class Bot:
         chat = q.get('message', {}).get('chat', {})
         def answer(text):
             self.api.call('answerCallbackQuery', callback_query_id=q['id'], text=text, show_alert=True)
-        if chat.get('type') != 'private' or str(chat.get('id')) != uid or data not in ('exchange:one', 'exchange:all'):
-            answer('Откройте /exchange в личном чате бота.')
+        parts = data.split(':')
+        mode = parts[1] if len(parts) in (2, 3) else ''
+        bound = len(parts) == 3 and parts[2] == uid
+        legacy_private = len(parts) == 2 and chat.get('type') == 'private' and str(chat.get('id')) == uid
+        if mode not in ('one', 'all') or not (bound or legacy_private) or chat.get('type') not in ('private', 'group', 'supergroup') or chat.get('type') == 'private' and str(chat.get('id')) != uid:
+            answer('Это чужой профиль. Откройте свой профиль: /profile')
             return True
         receipt = uid + ':' + q['id']
         if receipt in self.state.get('exchange_receipts', {}):
@@ -253,7 +272,7 @@ class Bot:
             return True
         account = self.state.get('accounts', {}).get(uid, {})
         available = account.get('arena_coins', 0)
-        amount = available if data == 'exchange:all' else 1
+        amount = available if mode == 'all' else 1
         if available < 1 or amount > available:
             answer('Недостаточно Арена-коинов. Заработайте их победами подряд.')
             return True
@@ -483,10 +502,9 @@ class Bot:
                           '/transfer ID сумма — выдать коины игроку\n'
                           '/transfer сумма — выдать коины ответом на сообщение в группе\n'
                           '/balance — баланс\n'
-                          '/exchange — обмен Арена-коинов 1:100\n'
                           '/shop — магазин с кнопками\n'
                           '/inventory — предметы и украшения\n'
-                          '/profile — свой игровой профиль\n\n'
+                          '/profile — свой профиль и обмен Арена-коинов\n\n'
                           'Ваш доступ к коинам — безлимитный.\n'
                           'Повторно открыть список: владелец')
             return
@@ -625,11 +643,11 @@ class Bot:
                 lines = [f"{i}. {a['name']} {cosmetics(a)} — 🏆 {a['wins']} · 🪙 {a['coins']}" for i, (u, a) in enumerate(ranked, 1)]
                 self.api.send(chat, '🏆 Топ игроков\n' + ('\n'.join(lines) or 'Побед пока нет. Станьте первым!'))
             elif cmd == '/balance':
-                self.api.send(chat, f"🪙 Ваш баланс: {'∞' if unlimited else account.get('coins', 0)} коинов.\n🏅 Арена-коины: {account.get('arena_coins', 0)} · 🔥 серия: {account.get('win_streak', 0)}\nОбмен 1:100 — /exchange\nПобеда: +100. Это игровые очки без денежной стоимости.")
+                self.api.send(chat, f"🪙 Ваш баланс: {'∞' if unlimited else account.get('coins', 0)} коинов.\n🏅 Арена-коины: {account.get('arena_coins', 0)} · 🔥 серия: {account.get('win_streak', 0)}\nОбмен 1:100 — кнопки в /profile\nПобеда: +100. Это игровые очки без денежной стоимости.")
             else:
                 wins = account.get('wins', 0)
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
-                self.show_profile(chat, uid, f"Ваш профиль\n🆔 {uid}\n" + ((self.profile_rank(uid) + "\n") if self.profile_rank(uid) else "") + f"{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🔥 Побед подряд: {account.get('win_streak', 0)} · рекорд: {account.get('best_win_streak', 0)}\n🏅 Арена-коины: {account.get('arena_coins', 0)}\n🪙 Коины: {'∞ (владелец)' if self.state.get('coin_owner_id') == uid else '∞ (админ)' if uid in BOT_ADMIN_IDS else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
+                self.show_own_profile(chat, uid, f"Ваш профиль\n🆔 {uid}\n" + ((self.profile_rank(uid) + "\n") if self.profile_rank(uid) else "") + f"{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🔥 Побед подряд: {account.get('win_streak', 0)} · рекорд: {account.get('best_win_streak', 0)}\n🏅 Арена-коины: {account.get('arena_coins', 0)}\n🪙 Коины: {'∞ (владелец)' if self.state.get('coin_owner_id') == uid else '∞ (админ)' if uid in BOT_ADMIN_IDS else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
             return
         if cmd == '/roles':
             self.api.send(chat, '\n'.join(ROLES.values()))
@@ -753,7 +771,7 @@ class Bot:
                 self.phase(chat, g, 'night')
 
     def configure_commands(self):
-        self.api.call('setMyCommands', scope={'type': 'all_private_chats'}, commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('shop','Магазин за коины'),('inventory','Ваши покупки'),('transfer','Передать коины: /transfer 100'),('exchange','Обмен Арена-коинов'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
+        self.api.call('setMyCommands', scope={'type': 'all_private_chats'}, commands=[{'command': c, 'description': d} for c, d in [('start','Набор и автостарт через 90 секунд'),('newgame','Новая игра'),('join','Вступить'),('leave','Выйти из набора'),('begin','Начать'),('players','Игроки'),('stop','Отменить'),('help','Правила'),('roles','Все 20 ролей'),('stars','Купить коины за Stars'),('terms','Условия покупки'),('paysupport','Помощь по оплате'),('shop','Магазин за коины'),('inventory','Ваши покупки'),('transfer','Передать коины: /transfer 100'),('balance','Баланс коинов'),('profile','Победы и награды'),('top','Лучшие игроки'),('myrole','Моя тайная роль')]])
         commands = [{'command': c, 'description': d} for c, d in GROUP_COMMANDS]
         self.api.call('setMyCommands', scope={'type': 'all_group_chats'}, commands=commands)
         self.api.call('setMyCommands', scope={'type': 'default'}, commands=commands)
@@ -1074,7 +1092,7 @@ class SurvivalBot(Bot):
             result += f"\n🪙 Награда: +100 коинов. Баланс: {account['coins']}."
             result += f"\n🔥 Побед подряд: {streak}."
             if arena_bonus:
-                result += f"\n🏅 Бонус за серию: +{arena_bonus} Арена-коинов! Обмен 1:100 в ЛС: /exchange"
+                result += f"\n🏅 Бонус за серию: +{arena_bonus} Арена-коинов! Обмен 1:100 — кнопки в /profile"
             if badge:
                 result += '\nНовая награда: ' + badge
                 if bonus:
