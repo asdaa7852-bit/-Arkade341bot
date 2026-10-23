@@ -41,13 +41,14 @@ class DecorationTests(unittest.TestCase):
         self.click('unequip:all'); self.assertEqual(equipped_items(self.account),[])
         self.account['inventory']=[];self.click('equip:fire')
         self.assertEqual(equipped_items(self.account),[])
-    def test_one_animation_cached_per_combination(self):
+    def test_profile_shows_four_decorations_without_animation(self):
         set_decorations(self.account,['fire','wolf','diamond','legend'])
-        self.message('/profile'); self.assertEqual(self.api.uploads,1)
-        self.message('/profile'); self.assertEqual(self.api.uploads,1)
-        self.assertEqual(self.api.calls[-1][0],'sendAnimation')
-        self.click('equip:fire'); self.message('/profile')
-        self.assertEqual(self.api.uploads,2)
+        self.message('/profile'); self.message('/profile')
+        self.assertEqual(self.api.uploads,0)
+        self.assertFalse(any(method=='sendAnimation' for method,_ in self.api.calls))
+        text=self.api.messages[-1][1]
+        for label in ('Огонь','Волк','Бриллиант','Гроза арены'):
+            self.assertIn(label,text)
     def test_purchase_auto_equips_without_losing_owned_items(self):
         self.account['inventory'].remove('legend')
         set_decorations(self.account,['survivor','raider','fire','wolf'])
