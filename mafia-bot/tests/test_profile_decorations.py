@@ -7,7 +7,7 @@ from profile_fx import render
 class FakeAPI:
     def __init__(self): self.messages=[]; self.uploads=0; self.calls=[]
     def send(self, chat, text, keyboard=None): self.messages.append((chat,text,keyboard))
-    def profile(self, chat, uid, text): self.send(chat,text)
+    def profile(self, chat, uid, text, keyboard=None): self.send(chat,text,keyboard)
     def decoration_animation(self, chat, items):
         self.uploads+=1
         return {'animation':{'file_id':'merged-'+','.join(items)}}
