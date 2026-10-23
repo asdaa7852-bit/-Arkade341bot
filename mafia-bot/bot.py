@@ -424,6 +424,7 @@ class Bot:
             self.api.send(chat, '👑 Панель владельца\n\n'
                           '🔐 Только для владельца:\n'
                           '/adminprofile — профили всех администраторов\n'
+                          '/playerprofile ID — игровой профиль любого игрока\n'
                           '/adminprofile 5060019034 — профиль выбранного админа\n\n'
                           '🎮 Управление в группе:\n'
                           '/start — набор и автостарт через 90 секунд\n'
@@ -444,27 +445,40 @@ class Bot:
         if cmd in ('/use', '/kill', '/equip', '/unequip', '/buy') and not button_action:
             self.api.send(chat, 'Теперь всё через кнопки: /shop — купить, /inventory — использовать предмет или сменить украшения.')
             return
-        if cmd == '/adminprofile':
+        if cmd in ('/adminprofile', '/playerprofile'):
             if self.state.get('coin_owner_id') != uid:
                 self.api.send(chat, '⛔ Команда доступна только владельцу бота.')
                 return
             if m['chat']['type'] != 'private':
-                self.api.send(chat, 'Просмотр профилей администраторов доступен в ЛС бота.')
+                self.api.send(chat, 'Просмотр профилей доступен в ЛС бота.')
                 return
             args = text.split()
-            if len(args) > 2 or (len(args) == 2 and args[1] not in BOT_ADMIN_IDS):
-                self.api.send(chat, 'Укажите ID администратора: /adminprofile 5060019034')
-                return
-            targets = [args[1]] if len(args) == 2 else sorted(BOT_ADMIN_IDS)
+            if cmd == '/playerprofile':
+                if len(args) != 2 or not args[1].isascii() or not args[1].isdigit() or int(args[1]) <= 0:
+                    self.api.send(chat, 'Укажите Telegram ID игрока: /playerprofile 123456789')
+                    return
+                target = str(int(args[1]))
+                known = target in self.state.get('accounts', {}) or target in self.state.get('ready', []) or any(target in g['players'] for g in self.games.values())
+                if not known:
+                    self.api.send(chat, 'Игрок с этим ID пока не найден в боте.')
+                    return
+                targets = [target]
+            else:
+                if len(args) > 2 or (len(args) == 2 and args[1] not in BOT_ADMIN_IDS):
+                    self.api.send(chat, 'Укажите ID администратора: /adminprofile 5060019034')
+                    return
+                targets = [args[1]] if len(args) == 2 else sorted(BOT_ADMIN_IDS)
             for target in targets:
                 account = self.state.get('accounts', {}).get(target, {})
                 wins = account.get('wins', 0)
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
                 inventory = [SHOP[item][1] for item in account.get('inventory', []) if item in SHOP]
                 inventory += [f'{SHOP[item][1]} ×{count}' for item, count in account.get('consumables', {}).items() if item in SHOP and count > 0]
-                profile = (f"Профиль администратора: {account.get('name', 'Игрок')}\n🆔 {target}\n{self.profile_rank(target)}\n{cosmetics(account)}"
+                heading = 'Профиль администратора' if cmd == '/adminprofile' else 'Профиль игрока'
+                access = 'безлимит' if self.unlimited_coins(target) else 'обычный'
+                profile = (f"{heading}: {account.get('name', 'Игрок')}\n🆔 {target}\n{self.profile_rank(target)}\n{cosmetics(account)}"
                            f"\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}"
-                           f"\n🪙 Доступ: безлимит · накоплено: {account.get('coins', 0)}"
+                           f"\n🪙 Доступ: {access} · накоплено: {account.get('coins', 0)}"
                            "\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет')
                            + "\n\nИнвентарь:\n" + ('\n'.join(inventory) or 'Пусто'))
                 self.show_profile(chat, target, profile)
