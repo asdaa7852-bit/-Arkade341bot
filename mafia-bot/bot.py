@@ -151,10 +151,6 @@ class API:
         except Exception:
             raise RuntimeError('Не удалось отправить анимацию') from None
 
-    def decoration_animation(self, chat, items):
-        from profile_fx import render
-        return self.animation(chat, render(items), '✨ Украшения профиля: ' + ' · '.join(SHOP[item][1] for item in items))
-
     def profile(self, chat, uid, text):
         try:
             photos = self.call('getUserProfilePhotos', user_id=int(uid), limit=1).get('photos', [])
@@ -228,24 +224,6 @@ class Bot:
 
     def show_profile(self, chat, uid, text):
         getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, uid, text)
-        items = equipped_items(self.state.get('accounts', {}).get(str(uid), {}))
-        upload = getattr(self.api, 'decoration_animation', None)
-        if not items or upload is None:
-            return
-        key = 'v1:' + ','.join(items)
-        try:
-            cached = self.state.get('profile_animations', {}).get(key)
-            if cached:
-                self.api.call('sendAnimation', chat_id=chat, animation=cached, caption='✨ Украшения профиля: ' + ' · '.join(SHOP[item][1] for item in items))
-            else:
-                result = upload(chat, items)
-                file_id = result.get('animation', {}).get('file_id') if isinstance(result, dict) else None
-                if file_id:
-                    self.state.setdefault('profile_animations', {})[key] = file_id
-                    self.save()
-        except Exception:
-            self.state.get('profile_animations', {}).pop(key, None)
-            logging.warning('Анимация украшений недоступна; профиль сохранён')
 
     def profile_rank(self, uid):
         if self.state.get('coin_owner_id') == str(uid):
@@ -514,7 +492,7 @@ class Bot:
             stock = account.setdefault('consumables', {})
             if cmd == '/shop':
                 lines = [f"{label} — {price} 🪙 · код: {item}" + (f' · в рюкзаке: {stock.get(item, 0)}' if kind == 'consumable' else ' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
-                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nМожно надеть до 4 украшений; в профиле они объединяются в анимацию. Новая покупка заменяет самое раннее украшение, если все места заняты. Расходники применяются сразу, если это возможно; иначе сохраняются в рюкзаке. Используйте кнопки в /inventory. Только ночью, максимум один расходник за игру (включая владельца). Тайный приговор: дополнительно один на весь матч.", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
+                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nМожно надеть до 4 украшений; они отображаются в профиле списком. Новая покупка заменяет самое раннее украшение, если все места заняты. Расходники применяются сразу, если это возможно; иначе сохраняются в рюкзаке. Используйте кнопки в /inventory. Только ночью, максимум один расходник за игру (включая владельца). Тайный приговор: дополнительно один на весь матч.", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
             elif cmd == '/inventory':
                 lines = [f"{SHOP[item][1]}" for item in owned if item in SHOP]
                 lines += [f'{SHOP[item][1]} ×{count}' for item, count in stock.items() if item in SHOP and count > 0]
