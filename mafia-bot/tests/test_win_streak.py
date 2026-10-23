@@ -51,6 +51,24 @@ class StreakTests(unittest.TestCase):
         with self.assertRaises(OSError):self.exchange()
         self.assertEqual((a['coins'],a['arena_coins']),(0,1))
         self.assertFalse(self.bot.state.get('exchange_receipts'))
+    def test_profile_buttons_bound_to_owner_in_group_and_private(self):
+        self.bot.state['accounts']={'1':{'coins':0,'arena_coins':2}}
+        for kind,chat in [('private',1),('group',-1)]:
+            self.bot.message({'text':'/profile','from':{'id':1},'chat':{'id':chat,'type':kind}})
+            rows=self.api.messages[-1][2]
+            self.assertEqual(rows[0][0]['callback_data'],'exchange:one:1')
+            self.assertEqual(rows[1][0]['callback_data'],'exchange:all:1')
+        q={'id':'other','data':'exchange:one:1','from':{'id':2},'message':{'chat':{'id':-1,'type':'group'}}}
+        self.bot.callback(q)
+        self.assertEqual(self.bot.state['accounts']['1']['arena_coins'],2)
+        q.update(id='mine',**{'from':{'id':1}});self.bot.callback(q)
+        self.assertEqual(self.bot.state['accounts']['1']['arena_coins'],1)
+        self.assertEqual(self.bot.state['accounts']['1']['coins'],100)
+    def test_inspected_profile_has_no_exchange_controls(self):
+        self.bot.state['coin_owner_id']='1'
+        self.bot.state['accounts']={'2':{'coins':0,'arena_coins':3}}
+        self.bot.message({'text':'/playerprofile 2','from':{'id':1},'chat':{'id':1,'type':'private'}})
+        self.assertIsNone(self.api.messages[-1][2])
     def test_old_accounts_start_streak_from_zero_and_cancel_does_not_reset(self):
         self.bot.state['accounts']={'1':{'coins':100,'wins':50,'games':100}}
         self.finish();a=self.bot.state['accounts']['1']
