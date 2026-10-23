@@ -29,11 +29,18 @@ SHOP = {
 }
 
 
+def equipped_items(account):
+    source = account.get('decorations', list(account.get('equipped', {}).values()))
+    return list(dict.fromkeys(item for item in source if item in SHOP and item in account.get('inventory', []) and SHOP[item][0] != 'consumable'))[:4]
+
+
+def set_decorations(account, items):
+    account['decorations'] = list(dict.fromkeys(items))[:4]
+    account['equipped'] = {SHOP[item][0]: item for item in account['decorations']}
+
+
 def cosmetics(account):
-    owned = account.get('inventory', [])
-    selected = account.get('equipped', {})
-    return ' · '.join(SHOP[item][1] for kind in ('title', 'badge')
-                      if (item := selected.get(kind)) in SHOP and item in owned and SHOP[item][0] == kind)
+    return ' · '.join(SHOP[item][1] for item in equipped_items(account))
 
 
 GROUP_COMMANDS = [
@@ -121,12 +128,16 @@ class API:
 
 
 
-    def animation(self, chat, content):
+    def animation(self, chat, content, caption=None):
         boundary = 'Arena' + secrets.token_hex(16)
+        is_gif = content.startswith(b'GIF8')
+        filename, mime = ('profile.gif', 'image/gif') if is_gif else ('arena.mp4', 'video/mp4')
+        fields = f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n' if caption else ''
         prefix = (
+            fields +
             f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{chat}\r\n'
-            f'--{boundary}\r\nContent-Disposition: form-data; name="animation"; filename="arena.mp4"\r\n'
-            'Content-Type: video/mp4\r\n\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="animation"; filename="{filename}"\r\n'
+            f'Content-Type: {mime}\r\n\r\n'
         ).encode()
         body = prefix + content + f'\r\n--{boundary}--\r\n'.encode()
         req = urllib.request.Request(self.base + 'sendAnimation', body,
@@ -139,6 +150,10 @@ class API:
             return result['result']
         except Exception:
             raise RuntimeError('Не удалось отправить анимацию') from None
+
+    def decoration_animation(self, chat, items):
+        from profile_fx import render
+        return self.animation(chat, render(items), '✨ Украшения профиля: ' + ' · '.join(SHOP[item][1] for item in items))
 
     def profile(self, chat, uid, text):
         try:
@@ -210,6 +225,27 @@ class Bot:
         except Exception:
             self.state.pop('intro_animation_v1', None)
             logging.warning('Стартовая анимация недоступна; показываем приветствие')
+
+    def show_profile(self, chat, uid, text):
+        getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, uid, text)
+        items = equipped_items(self.state.get('accounts', {}).get(str(uid), {}))
+        upload = getattr(self.api, 'decoration_animation', None)
+        if not items or upload is None:
+            return
+        key = 'v1:' + ','.join(items)
+        try:
+            cached = self.state.get('profile_animations', {}).get(key)
+            if cached:
+                self.api.call('sendAnimation', chat_id=chat, animation=cached, caption='✨ Украшения профиля: ' + ' · '.join(SHOP[item][1] for item in items))
+            else:
+                result = upload(chat, items)
+                file_id = result.get('animation', {}).get('file_id') if isinstance(result, dict) else None
+                if file_id:
+                    self.state.setdefault('profile_animations', {})[key] = file_id
+                    self.save()
+        except Exception:
+            self.state.get('profile_animations', {}).pop(key, None)
+            logging.warning('Анимация украшений недоступна; профиль сохранён')
 
     def profile_rank(self, uid):
         if self.state.get('coin_owner_id') == str(uid):
@@ -453,7 +489,7 @@ class Bot:
                            f"\n🪙 Доступ: безлимит · накоплено: {account.get('coins', 0)}"
                            "\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет')
                            + "\n\nИнвентарь:\n" + ('\n'.join(inventory) or 'Пусто'))
-                getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, target, profile)
+                self.show_profile(chat, target, profile)
             return
         if m['chat']['type'] in ('group', 'supergroup') and cmd not in { '/' + c for c, _ in GROUP_COMMANDS }:
             if cmd in {'/shop', '/buy', '/inventory', '/equip', '/unequip', '/transfer', '/balance', '/profile', '/top', '/stars', '/terms', '/paysupport', '/support', '/myrole', '/use', '/kill'}:
@@ -478,16 +514,16 @@ class Bot:
             stock = account.setdefault('consumables', {})
             if cmd == '/shop':
                 lines = [f"{label} — {price} 🪙 · код: {item}" + (f' · в рюкзаке: {stock.get(item, 0)}' if kind == 'consumable' else ' ✅ Куплено' if item in owned else '') for item, (kind, label, price) in SHOP.items()]
-                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nТитулы и значки надеваются сразу после покупки. Расходники применяются сразу, если это возможно; иначе сохраняются в рюкзаке. Используйте кнопки в /inventory. Только ночью, максимум один расходник за игру (включая владельца). Тайный приговор: дополнительно один на весь матч.", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
+                self.api.send(chat, '🛍 Магазин арены\n' + '\n'.join(lines) + f"\n\nБаланс: {'∞' if unlimited else account['coins']} 🪙\nНажмите на товар ниже, чтобы купить\nПополнить за Stars: /stars\nМожно надеть до 4 украшений; в профиле они объединяются в анимацию. Новая покупка заменяет самое раннее украшение, если все места заняты. Расходники применяются сразу, если это возможно; иначе сохраняются в рюкзаке. Используйте кнопки в /inventory. Только ночью, максимум один расходник за игру (включая владельца). Тайный приговор: дополнительно один на весь матч.", [[{'text': f'{label} · {price} 🪙', 'callback_data': f'shop:buy:{item}'}] for item, (kind, label, price) in SHOP.items()])
             elif cmd == '/inventory':
                 lines = [f"{SHOP[item][1]}" for item in owned if item in SHOP]
                 lines += [f'{SHOP[item][1]} ×{count}' for item, count in stock.items() if item in SHOP and count > 0]
-                buttons = [[{'text': 'Надеть: ' + SHOP[item][1], 'callback_data': 'inv:equip:' + item}] for item in owned if item in SHOP]
+                buttons = [[{'text': ('Снять: ' if item in equipped_items(account) else 'Надеть: ') + SHOP[item][1], 'callback_data': 'inv:equip:' + item}] for item in owned if item in SHOP]
                 buttons += [[{'text': 'Использовать: ' + SHOP[item][1], 'callback_data': 'inv:use:' + item}] for item, count in stock.items() if item in SHOP and count > 0]
                 buttons += [[{'text': 'Снять украшения', 'callback_data': 'inv:unequip:all'}]]
-                self.api.send(chat, '🎒 Ваши покупки\n' + ('\n'.join(lines) or 'Пока пусто. Откройте /shop') + '\nНадето: ' + (cosmetics(account) or 'ничего'), buttons)
+                self.api.send(chat, f'🎒 Ваши покупки · украшений {len(equipped_items(account))}/4\n' + ('\n'.join(lines) or 'Пока пусто. Откройте /shop') + '\nНадето: ' + (cosmetics(account) or 'ничего'), buttons)
             elif cmd == '/unequip':
-                account['equipped'] = {}
+                set_decorations(account, [])
                 self.save()
                 self.api.send(chat, 'Украшения сняты. Покупки остались в /inventory.')
             else:
@@ -513,8 +549,9 @@ class Bot:
                     if kind == 'consumable':
                         stock[item] = stock.get(item, 0) + 1
                     else:
+                        selected = equipped_items(account)
                         owned.append(item)
-                        account.setdefault('equipped', {})[kind] = item
+                        set_decorations(account, (selected + [item])[-4:])
                     if receipt:
                         self.state.setdefault('shop_receipts', {})[receipt] = item
                     self.save()
@@ -528,7 +565,11 @@ class Bot:
                 elif item not in owned:
                     self.api.send(chat, 'Сначала купите предмет: /buy ' + item)
                 else:
-                    account.setdefault('equipped', {})[kind] = item
+                    selected = equipped_items(account)
+                    if item not in selected and len(selected) >= 4:
+                        self.api.send(chat, 'Уже надеты 4 украшения. Снимите одно кнопкой в /inventory.')
+                        return
+                    set_decorations(account, selected if item in selected else selected + [item])
                     self.save()
                     self.api.send(chat, '✅ Надето: ' + label + '. Посмотреть: /profile')
             return
@@ -545,7 +586,7 @@ class Bot:
             else:
                 wins = account.get('wins', 0)
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
-                getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, uid, f"Ваш профиль\n🆔 {uid}\n" + ((self.profile_rank(uid) + "\n") if self.profile_rank(uid) else "") + f"{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (владелец)' if self.state.get('coin_owner_id') == uid else '∞ (админ)' if uid in BOT_ADMIN_IDS else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
+                self.show_profile(chat, uid, f"Ваш профиль\n🆔 {uid}\n" + ((self.profile_rank(uid) + "\n") if self.profile_rank(uid) else "") + f"{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (владелец)' if self.state.get('coin_owner_id') == uid else '∞ (админ)' if uid in BOT_ADMIN_IDS else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
             return
         if cmd == '/roles':
             self.api.send(chat, '\n'.join(ROLES.values()))
@@ -899,6 +940,15 @@ class SurvivalBot(Bot):
             if chat.get('type') != 'private' or str(chat.get('id')) != uid or len(parts) != 3 or parts[1] not in ('use', 'equip', 'unequip') or (parts[1] != 'unequip' and parts[2] not in SHOP):
                 self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Откройте свой /inventory в ЛС.')
                 return
+            if parts[1] == 'equip':
+                account = self.state.get('accounts', {}).get(uid, {})
+                selected = equipped_items(account)
+                if parts[2] in selected:
+                    set_decorations(account, [item for item in selected if item != parts[2]])
+                    self.save()
+                    self.api.send(uid, 'Украшение снято. Обновить список: /inventory')
+                    self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Украшение снято.')
+                    return
             command = '/' + parts[1] + (' ' + parts[2] if parts[1] != 'unequip' else '')
             self.message({'text': command, 'from': q['from'], 'chat': chat}, button_action=True)
             self.api.call('answerCallbackQuery', callback_query_id=q['id'], text='Результат — в сообщении бота.')
