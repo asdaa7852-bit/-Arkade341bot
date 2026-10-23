@@ -211,6 +211,13 @@ class Bot:
             self.state.pop('intro_animation_v1', None)
             logging.warning('Стартовая анимация недоступна; показываем приветствие')
 
+    def profile_rank(self, uid):
+        if self.state.get('coin_owner_id') == str(uid):
+            return '👑 Владелец'
+        if str(uid) in BOT_ADMIN_IDS:
+            return '🛡 Админ'
+        return ''
+
     def unlimited_coins(self, uid):
         return str(uid) in BOT_ADMIN_IDS or self.state.get('coin_owner_id') == str(uid)
 
@@ -441,7 +448,7 @@ class Bot:
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
                 inventory = [SHOP[item][1] for item in account.get('inventory', []) if item in SHOP]
                 inventory += [f'{SHOP[item][1]} ×{count}' for item, count in account.get('consumables', {}).items() if item in SHOP and count > 0]
-                profile = (f"Профиль администратора: {account.get('name', 'Игрок')}\n🆔 {target}\n{cosmetics(account)}"
+                profile = (f"Профиль администратора: {account.get('name', 'Игрок')}\n🆔 {target}\n{self.profile_rank(target)}\n{cosmetics(account)}"
                            f"\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}"
                            f"\n🪙 Доступ: безлимит · накоплено: {account.get('coins', 0)}"
                            "\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет')
@@ -538,7 +545,7 @@ class Bot:
             else:
                 wins = account.get('wins', 0)
                 badges = [name for count, name in [(1, '🥇 Первая победа'), (5, '🏅 Чемпион арены'), (10, '👑 Легенда арены')] if wins >= count]
-                getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, uid, f"Ваш профиль\n🆔 {uid}\n{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (администратор)' if unlimited else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
+                getattr(self.api, 'profile', lambda chat, uid, text: self.api.send(chat, text))(chat, uid, f"Ваш профиль\n🆔 {uid}\n" + ((self.profile_rank(uid) + "\n") if self.profile_rank(uid) else "") + f"{cosmetics(account)}\n🏆 Победы: {wins}\n🎮 Завершённые игры: {account.get('games', 0)}\n🪙 Коины: {'∞ (владелец)' if self.state.get('coin_owner_id') == uid else '∞ (админ)' if uid in BOT_ADMIN_IDS else account.get('coins', 0)}\n\nНаграды:\n" + ('\n'.join(badges) or 'Пока нет — выиграйте первую игру!'))
             return
         if cmd == '/roles':
             self.api.send(chat, '\n'.join(ROLES.values()))
